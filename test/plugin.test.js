@@ -176,7 +176,9 @@ test('manifests: plugin and marketplace agree, the install dialog asks for URL a
   assert.deepEqual(manifest.userConfig.mcp_url.required, true);
   assert.equal(manifest.userConfig.token.sensitive, true);
   for (const field of Object.values(manifest.userConfig)) { assert.ok(field.title); assert.ok(field.description); }
-  for (const rel of [manifest.mcpServers, manifest.hooks]) assert.ok(fs.existsSync(path.join(ROOT, rel)), rel);
+  // Claude Code auto-loads .mcp.json and hooks/hooks.json; naming them in the manifest is a duplicate-load error.
+  assert.equal(manifest.mcpServers, undefined); assert.equal(manifest.hooks, undefined);
+  for (const rel of ['.mcp.json', 'hooks/hooks.json']) assert.ok(fs.existsSync(path.join(ROOT, rel)), rel);
   const mcp = JSON.parse(fs.readFileSync(path.join(ROOT, '.mcp.json'), 'utf8'));
   assert.equal(mcp.mcpServers.waypoint.url, '${user_config.mcp_url}');
   assert.equal(mcp.mcpServers.waypoint.headers.Authorization, 'Bearer ${user_config.token}');

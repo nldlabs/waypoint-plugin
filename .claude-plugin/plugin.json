@@ -3,11 +3,16 @@
   "displayName": "Waypoint",
   "version": "0.1.0",
   "description": "Connects the Waypoint MCP server and attaches harness telemetry (agent, model, host, branch, changed files) to run claims, checkpoints and completions automatically.",
-  "author": { "name": "nldlabs" },
+  "author": {
+    "name": "nldlabs"
+  },
   "homepage": "https://github.com/nldlabs/waypoint-plugin",
-  "keywords": ["waypoint", "mcp", "agents", "telemetry"],
-  "mcpServers": "./.mcp.json",
-  "hooks": "./hooks/hooks.json",
+  "keywords": [
+    "waypoint",
+    "mcp",
+    "agents",
+    "telemetry"
+  ],
   "userConfig": {
     "mcp_url": {
       "type": "string",
