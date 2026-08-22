@@ -137,7 +137,7 @@ function install(options) {
       const pluginDir = toPosix(path.relative(options.dir, PLUGIN_ROOT) || '.');
       notes.push(
         `Claude Code: no files to write. In Claude Code type /plugin, open Marketplaces, add the plugin repository\n` +
-        `  (local path ${toPosix(PLUGIN_ROOT)} or nldlabs/waypoint-plugin on GitHub), then install "waypoint" from Discover;\n` +
+        `  (local path ${toPosix(PLUGIN_ROOT)} or nldlabs/Waypoint-Plugin on GitHub), then install "waypoint" from Discover;\n` +
         `  the install dialog asks for the MCP URL and token. Terminal equivalent:\n` +
         `    claude plugin marketplace add ${toPosix(PLUGIN_ROOT)} && claude plugin install waypoint@waypoint --scope user\n` +
         `  or for one session only: claude --plugin-dir ${pluginDir.startsWith('.') ? pluginDir : `./${pluginDir}`}`
