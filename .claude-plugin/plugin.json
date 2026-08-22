@@ -1,7 +1,7 @@
 {
   "name": "waypoint",
   "displayName": "Waypoint",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Attaches harness telemetry (agent, model, host, branch, changed files) to Waypoint run claims, checkpoints and completions, and suspends the agent while a blocking decision waits for the operator. Pair with the Waypoint MCP server from claude mcp add.",
   "author": {
     "name": "nldlabs"

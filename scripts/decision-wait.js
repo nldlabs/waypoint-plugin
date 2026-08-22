@@ -216,6 +216,9 @@ async function waitForDecision(options) {
   let graceMs = Number(state.graceMs || DEFAULT_GRACE_MS);
   const chunkStarted = Date.now();
   let polls = 0;
+  // Server-side hold per poll. A server whose function times out under 20 s answers a
+  // long hold with a 5xx; halve the hold on such errors (down to 5 s) rather than failing.
+  let holdSeconds = Number(state.holdSeconds || SERVER_HOLD_SECONDS);
   writeState(file, { ...state, startedAt, attempt, decisionId, projectId, graceMs, lastPollAt: Date.now() });
 
   for (;;) {
@@ -223,13 +226,15 @@ async function waitForDecision(options) {
     let response;
     dbg('poll', attempt, 'calling', endpoint.url);
     try {
-      response = await call(endpoint, AWAIT_TOOL, { projectId, decisionId, waitSeconds: SERVER_HOLD_SECONDS });
+      response = await call(endpoint, AWAIT_TOOL, { projectId, decisionId, waitSeconds: holdSeconds });
       errors = 0;
       polls += 1;
       dbg('poll result', response && response.status);
       if (response && Number(response.waiterGraceMs) > 0) graceMs = Number(response.waiterGraceMs);
     } catch (error) {
       errors += 1;
+      if (/^HTTP 5\d\d/.test(String(error && error.message)) && holdSeconds > 5) holdSeconds = Math.max(5, Math.floor(holdSeconds / 2));
+      dbg('poll error', String(error && error.message), 'hold now', holdSeconds);
       if (errors >= MAX_CONSECUTIVE_ERRORS) return { status: 'error', reason: String(error && error.message || error), polls, waitedMs: Date.now() - chunkStarted };
       const retry = ERROR_SCHEDULE[Math.min(errors - 1, ERROR_SCHEDULE.length - 1)];
       await sleep(retry * 1000 * timeScale, signal);
@@ -240,9 +245,9 @@ async function waitForDecision(options) {
       return { status: response.status, response, polls, waitedMs: Date.now() - chunkStarted };
     }
     attempt += 1;
-    writeState(file, { startedAt, attempt, decisionId, projectId, graceMs, lastPollAt: Date.now() });
-    if (Date.now() - startedAt >= maxMs) return { status: 'open', reason: 'max', response, polls, waitedMs: Date.now() - chunkStarted };
-    if (Date.now() - chunkStarted >= chunkMs) return { status: 'open', reason: 'chunk', response, polls, waitedMs: Date.now() - chunkStarted };
+    writeState(file, { startedAt, attempt, decisionId, projectId, graceMs, holdSeconds, lastPollAt: Date.now() });
+    if (Date.now() - startedAt >= maxMs) return { status: 'open', reason: 'max', response, polls, holdSeconds, waitedMs: Date.now() - chunkStarted };
+    if (Date.now() - chunkStarted >= chunkMs) return { status: 'open', reason: 'chunk', response, polls, holdSeconds, waitedMs: Date.now() - chunkStarted };
     await sleep(backoffSeconds(attempt - 1, graceMs) * 1000 * timeScale, signal);
   }
 }
@@ -276,7 +281,7 @@ async function handleAwait({ payload, toolName, toolInput, copilotCli, env = pro
   const result = await waitForDecision({ endpoint, projectId: toolInput.projectId, decisionId: toolInput.decisionId, stateFile: file, env, signal, call });
   if (result.status === 'aborted') return undefined;
   const closed = result.status !== 'open' && result.status !== 'error';
-  const updated = { ...toolInput, waitSeconds: closed ? 0 : SERVER_HOLD_SECONDS };
+  const updated = { ...toolInput, waitSeconds: closed ? 0 : (result.holdSeconds || SERVER_HOLD_SECONDS) };
   const context = describeOutcome(result);
   if (copilotCli) return { permissionDecision: 'allow', permissionDecisionReason: 'Waypoint plugin waited for the decision', modifiedArgs: updated };
   return {

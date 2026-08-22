@@ -26,9 +26,13 @@ function mcpServer(script, { record = [] } = {}) {
       const step = script[Math.min(calls, script.length - 1)];
       calls += 1;
       if (step === 'http500') { res.writeHead(500); res.end('boom'); return; }
+      // A server whose function times out under a 20 s hold: 5xx for long holds only.
+      if (step === 'shorthold' && request.params.arguments.waitSeconds > 10) { res.writeHead(502); res.end('timeout'); return; }
+      if (step === 'shorthold') { calls += 0; }
       const decisionId = request.params.arguments.decisionId;
       const payload = step === 'open'
         ? { decisionId, status: 'open', resumeAvailable: false, pollAfterMs: 10000, waitedMs: 0, waiterGraceMs: 360000 }
+        : step === 'shorthold' ? { decisionId, status: 'resolved', outcome: 'short', resumeAvailable: true, pollAfterMs: 0, waitedMs: 0, waiterGraceMs: 360000 }
         : { decisionId, status: step, outcome: step === 'resolved' ? '24 hours' : 'abandoned', responseNote: step === 'resolved' ? 'Go with a day.' : 'Agent stopped waiting', resumeAvailable: true, pollAfterMs: 0, waitedMs: 0, waiterGraceMs: 360000 };
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: JSON.stringify(payload) }] } }));
@@ -140,6 +144,15 @@ test('as a child process against a stand-in MCP server', async (t) => {
     assert.equal(mcp.calls(), 3);
     assert.equal(out.hookSpecificOutput.updatedInput.waitSeconds, 0);
     assert.doesNotMatch(JSON.stringify(out), /wp_testtoken/);
+  });
+
+  await t.test('a server that cannot hold 20 s: the hook halves its hold on 5xx and still gets the answer', async () => {
+    const record = [];
+    const mcp = await mcpServer(['shorthold'], { record });
+    t.after(() => mcp.close());
+    const out = await runHook(awaitCall('sess-short'), fastEnv(mcp.url));
+    assert.equal(out.hookSpecificOutput.updatedInput.waitSeconds, 0);
+    assert.deepEqual(record.map((call) => call.args.waitSeconds), [20, 10]);
   });
 
   await t.test('Copilot CLI payload shape: modifiedArgs, no hookSpecificOutput', async () => {
