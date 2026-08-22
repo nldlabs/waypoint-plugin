@@ -126,10 +126,12 @@ An agent with nothing to do can park itself in Waypoint's **agent queue** by cal
 `waypoint_await_work`. The hook joins on its behalf — attaching harness, model, host, the
 working directory and the git repositories it can reach (the one it is in, plus siblings
 and children, with remote and branch) — and then polls exactly like the decision wait
-until you **send it a message from the dashboard** (Waiting for work panel). The agent
-resumes in the same turn with your instructions and is told to act on them, then to call
-`waypoint_await_work` again with `after=<message id>` to rejoin the queue. An agent whose
-polls stop drops off the panel within about 6 minutes.
+until you **send it a command from the dashboard** (Waiting for work panel). The agent
+resumes in the same turn with your command and is told to execute it, then to call
+`waypoint_await_work` again with `after=<message id>` and `reply=<its report>` — the report
+shows on the dashboard row — and keep waiting. The queue polls every ~30 s (20 s server
+hold + 10 s gap, no back-off: pick-up latency is the point); an agent whose polls stop
+drops off the panel within about 3 minutes.
 
 Same knobs as the decision wait: `WAYPOINT_WAIT_CHUNK_SECONDS`, `WAYPOINT_WAIT_MAX_SECONDS`,
 `WAYPOINT_WAIT_DISABLE=1` (the workspace is still attached; nothing is polled). State is

@@ -85,6 +85,13 @@ test('collectWorkspace reports the repository you are in first, then the reposit
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('the queue polls on a flat ~30 s cycle (20 s hold + 10 s gap), clamped under the server grace', () => {
+  assert.equal(work.QUEUE_GAP_SECONDS, 10);
+  const gap = work.queueGapSeconds(3 * 60 * 1000);
+  assert.ok(gap >= 9 && gap <= 11, `gap ≈ 10 s ±10 %, got ${gap}`);
+  assert.ok(work.queueGapSeconds(40 * 1000) <= 5, 'never over grace - hold - slack');
+});
+
 test('enrichInput fills agent and workspace from the machine but never overrides what the model said', () => {
   const out = work.enrichInput(
     { note: 'idle', agent: { model: 'm' }, workspace: { cwd: '/custom' } },
@@ -121,8 +128,8 @@ test('as a child process against a stand-in MCP server', async (t) => {
     assert.equal(hook.updatedInput.waiterId, 'w-1');
     assert.equal(hook.updatedInput.waitSeconds, 0);
     assert.equal(hook.updatedInput.note, 'Free for Waypoint work');
-    assert.match(hook.additionalContext, /Operator message for you \(project p-1\): "Take WP-0591 on Waypoint"/);
-    assert.match(hook.additionalContext, /after "m-1"/);
+    assert.match(hook.additionalContext, /Command from the operator \(project p-1\): "Take WP-0591 on Waypoint"/);
+    assert.match(hook.additionalContext, /after "m-1", and reply = a short report/);
     // The waiterId is kept for the rejoin; the token is not.
     const state = JSON.parse(fs.readFileSync(file, 'utf8'));
     assert.equal(state.waiterId, 'w-1');

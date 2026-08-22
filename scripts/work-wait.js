@@ -29,6 +29,10 @@ const DEFAULT_GRACE_MS = 6 * 60 * 1000;
 const MAX_CONSECUTIVE_ERRORS = 10;
 const ERROR_SCHEDULE = [5, 10, 20];
 const REPO_CAP = 25;
+// The queue is command and control: what matters is how fast a command is picked up, not
+// how few polls an idle hour costs (a poll is one cheap request). So no back-off: a 20 s
+// server hold, a 10 s gap, every ~30 s, for as long as the agent waits.
+const QUEUE_GAP_SECONDS = 10;
 
 function toolSuffix(toolName) {
   const name = String(toolName || '');
@@ -146,8 +150,14 @@ async function waitForWork(options) {
     save();
     if (Date.now() - startedAt >= maxMs) return { status: 'waiting', reason: 'max', response, waiterId, polls, waitedMs: Date.now() - chunkStarted, holdSeconds };
     if (Date.now() - chunkStarted >= chunkMs) return { status: 'waiting', reason: 'chunk', response, waiterId, polls, waitedMs: Date.now() - chunkStarted, holdSeconds };
-    await sleep(decisionWait.backoffSeconds(attempt - 1, graceMs) * 1000 * timeScale, signal);
+    await sleep(queueGapSeconds(graceMs) * 1000 * timeScale, signal);
   }
+}
+
+/** Seconds between polls: flat, jittered, and always under the server's grace. */
+function queueGapSeconds(graceMs = DEFAULT_GRACE_MS) {
+  const ceiling = Math.max(5, Math.floor(graceMs / 1000) - SERVER_HOLD_SECONDS - 15);
+  return Math.min(QUEUE_GAP_SECONDS * (0.9 + Math.random() * 0.2), ceiling);
 }
 
 function writeState(file, state) {
@@ -165,7 +175,7 @@ function describeOutcome(result) {
   const id = result.waiterId || r.waiterId;
   if (result.status === 'message' && r.message) {
     const where = r.message.projectId ? ` (project ${r.message.projectId}${r.message.workId ? `, work ${r.message.workId}` : ''})` : '';
-    return `Operator message for you${where}: "${r.message.text}". Act on it now — call waypoint_get_project_context for the project it names, claim work with waypoint_start_run, and checkpoint as usual. When you have finished, call waypoint_await_work again with waiterId ${id} and after "${r.message.id}" to rejoin the queue.`;
+    return `Command from the operator${where}: "${r.message.text}". Execute it now — if it names a project or work, call waypoint_get_project_context, claim with waypoint_start_run, and checkpoint as usual. When it is done, report back and rejoin the queue in one call: waypoint_await_work with waiterId ${id}, after "${r.message.id}", and reply = a short report of what you did and found (ids, branches, outcomes; the operator reads it on the dashboard). Then keep waiting for the next command.`;
   }
   if (result.status === 'dismissed') return 'The operator removed you from the agent queue. Stop waiting; rejoin with waypoint_await_work (no waiterId) only if asked to.';
   if (result.status === 'waiting') {
@@ -233,7 +243,9 @@ async function handleAwaitWork({ payload, toolName, toolInput, copilotCli, telem
 
 module.exports = {
   AWAIT_WORK_TOOL,
+  QUEUE_GAP_SECONDS,
   collectWorkspace,
+  queueGapSeconds,
   describeOutcome,
   enrichInput,
   handleAwaitWork,
