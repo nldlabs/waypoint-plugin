@@ -94,6 +94,7 @@ node scripts/waypoint-hook.js --event collect --harness claude-code
 | `agent.host`, `os`, `user`, `cwd`, `plugin` | the machine | all three |
 | `branch`, `repositoryUrl` | git (only if the model left them blank) | `start_run` |
 | `files`, `commits` | uncommitted changes + commits not yet pushed, merged with what the model listed (caps 200 / 100) | `checkpoint_run`, `complete_run` |
+| `note` | when the model gives none, a sentence built from the workspace (harness, cwd, repositories) so the operator can see what the agent can reach | `await_work` |
 | `commands`, `checks` | every shell command run since the last checkpoint (recorded by a PostToolUse hook on the harness's shell tool — `Bash`/`PowerShell` in Claude Code), with exit codes; typecheck / test / build / lint / e2e commands also become named checks, latest per name, `required: false` | `checkpoint_run`, `complete_run` |
 
 Fields the model supplies explicitly always win (a check the model names replaces the

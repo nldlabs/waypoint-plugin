@@ -214,3 +214,20 @@ test('as a child process against a stand-in MCP server', async (t) => {
     assert.match(out.hookSpecificOutput.additionalContext, /wait is disabled.*waiterId w-6/);
   });
 });
+
+test('enrichInput fills a default note from the workspace when the model gave none; a supplied note is kept (WP-0619)', () => {
+  const out = work.enrichInput({}, { agent: { harness: 'codex' } }, { cwd: 'D:/Waypoint', repositories: [{ path: 'D:/Waypoint', url: 'https://github.com/nldlabs/waypoint.git', branch: 'main' }, { path: 'D:/other', url: 'git@github.com:nldlabs/other.git' }] });
+  assert.equal(out.note, 'Idle codex in D:/Waypoint with nldlabs/waypoint, nldlabs/other checked out; ready for work on these repositories.');
+  assert.equal(work.enrichInput({ note: 'mine' }, { agent: { harness: 'codex' } }, { cwd: 'D:/Waypoint' }).note, 'mine');
+  assert.equal(work.enrichInput({}, {}, {}).note, undefined);
+});
+
+test('an assign command tells the agent to claim the work item before anything else (WP-0619)', () => {
+  const assign = work.commandContext({ id: 'm1', text: 'Take WP-0591', kind: 'assign', workId: 'w-1', projectId: 'p-1' }, 'waiter-1');
+  assert.match(assign, /^Assignment from the operator/);
+  assert.match(assign, /claim work w-1 with waypoint_start_run \(workIds: \["w-1"\], projectId "p-1"\)/);
+  assert.match(assign, /after "m1"/);
+  const plain = work.commandContext({ id: 'm2', text: 'Sup?' }, 'waiter-1');
+  assert.match(plain, /^Command from the operator/);
+  assert.doesNotMatch(plain, /Assignment/);
+});

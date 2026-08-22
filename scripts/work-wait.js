@@ -176,7 +176,12 @@ async function waitForWork(options) {
 
 function commandContext(message, waiterId) {
   const where = message.projectId ? ` (project ${message.projectId}${message.workId ? `, work ${message.workId}` : ''})` : '';
-  return `Command from the operator${where}: "${message.text}". Execute it now — if it names a project or work, call waypoint_get_project_context, claim with waypoint_start_run, and checkpoint as usual. When it is done, report back and rejoin the queue in one call: waypoint_await_work with waiterId ${waiterId}, after "${message.id}", and reply = a short report of what you did and found (ids, branches, outcomes; the operator reads it on the dashboard). Then keep waiting for the next command.`;
+  // An assignment (WP-0619): the operator handed over one work item; claiming it is the
+  // first thing to do, so the board stops showing it as pending and nobody else takes it.
+  const opening = message.workId
+    ? `Assignment from the operator${where}: "${message.text}". Before anything else, claim work ${message.workId} with waypoint_start_run (workIds: ["${message.workId}"]${message.projectId ? `, projectId "${message.projectId}"` : ''}); if the claim fails, another agent has it — report that and stop. Then call waypoint_get_project_context and checkpoint as usual.`
+    : `Command from the operator${where}: "${message.text}". Execute it now — if it names a project or work, call waypoint_get_project_context, claim with waypoint_start_run, and checkpoint as usual.`;
+  return `${opening} When it is done, report back and rejoin the queue in one call: waypoint_await_work with waiterId ${waiterId}, after "${message.id}", and reply = a short report of what you did and found (ids, branches, outcomes; the operator reads it on the dashboard). Then keep waiting for the next command.`;
 }
 
 function describeOutcome(result) {
@@ -194,6 +199,19 @@ function describeOutcome(result) {
   return undefined;
 }
 
+/** A note the operator can act on when the model gave none (WP-0619): where the agent is and what it can reach. */
+function defaultNote(telemetry, workspace) {
+  const harness = telemetry && telemetry.agent && telemetry.agent.harness;
+  const cwd = workspace && workspace.cwd;
+  const repos = (workspace && Array.isArray(workspace.repositories) ? workspace.repositories : [])
+    .map((repo) => String(repo.url || repo.path || '').replace(/^git@([^:]+):/, '$1/').replace(/^[a-z]+:\/\//i, '').replace(/\.git$/i, '').split('/').filter(Boolean).slice(-2).join('/'))
+    .filter(Boolean);
+  if (!cwd && !repos.length) return undefined;
+  const shown = repos.slice(0, 4).join(', ') + (repos.length > 4 ? ` +${repos.length - 4} more` : '');
+  const who = harness && harness !== 'unknown' ? harness : 'agent';
+  return `Idle ${who}${cwd ? ` in ${cwd}` : ''}${shown ? ` with ${shown} checked out` : ''}; ready for work on ${repos.length ? 'these repositories' : 'this workspace'}.`.slice(0, 1000);
+}
+
 /** The input the real call carries: what the model said, filled in from the machine. */
 function enrichInput(toolInput, telemetry, workspace) {
   const current = toolInput && typeof toolInput === 'object' ? toolInput : {};
@@ -207,6 +225,7 @@ function enrichInput(toolInput, telemetry, workspace) {
   const next = { ...current };
   if (Object.keys(agent).length) next.agent = agent;
   if (Object.keys(merged).length) next.workspace = merged;
+  if (!next.note) { const note = defaultNote(telemetry, next.workspace); if (note) next.note = note; }
   return next;
 }
 
