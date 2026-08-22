@@ -98,13 +98,36 @@ node scripts/waypoint-hook.js --event collect --harness claude-code
 Fields the model supplies explicitly always win. The Waypoint server validates and
 bounds `agent` like any other field.
 
+## Waiting for decisions
+
+When an agent raises a **blocking** decision (`waypoint_raise_decision`,
+`waypoint_propose_plan`) and calls `waypoint_await_decision`, the hook does the waiting:
+it holds the tool call and polls Waypoint itself — every 10 s at first, backing off to
+every 2 min — until you answer on the dashboard. The agent spends no tokens meanwhile and
+continues in the same turn with your answer in hand. Each poll is also a heartbeat: if the
+agent is stopped, killed or falls asleep, the polls stop and **Waypoint abandons the wait
+itself** within about 6 minutes (the decision is closed with a note, the run released).
+Nothing here tries to stop you stopping the agent.
+
+- Works in Claude Code, Codex and Copilot (CLI and VS Code) with the hooks above; the hook
+  reads the MCP URL and token from `WAYPOINT_MCP_URL` / `WAYPOINT_TOKEN`, else from the
+  harness's own MCP config (`~/.claude.json`, `~/.codex/config.toml`,
+  `~/.copilot/mcp-config.json`). VS Code's `.vscode/mcp.json` keeps the token as a secret
+  input the hook cannot read — export the two env vars there.
+- One hook invocation waits at most `WAYPOINT_WAIT_CHUNK_SECONDS` (default 1500) before
+  handing back to the model with "call await again"; total wait is capped by
+  `WAYPOINT_WAIT_MAX_SECONDS` (default 21600). Hook timeouts in the templates are 1800 s.
+- State is per session and per decision under the OS temp dir, so several agents on one
+  machine never share a wait. `WAYPOINT_WAIT_DISABLE=1` turns the feature off.
+
 ## Layout
 
 ```
 .claude-plugin/plugin.json        Claude Code plugin manifest (hooks-only)
 .claude-plugin/marketplace.json   this repo is its own marketplace
-hooks/hooks.json                  SessionStart + PreToolUse hooks (Claude Code)
-scripts/waypoint-hook.js          the hook — one script for every harness
+hooks/hooks.json                  SessionStart + PreToolUse + PostToolUse hooks (Claude Code)
+scripts/waypoint-hook.js          the hook — one entry point for every harness
+scripts/decision-wait.js          suspends the agent until a blocking decision is answered
 scripts/install.js                writes Codex / Copilot / VS Code config into a repo
 templates/                        what install.js renders
 test/                             node --test (no dependencies)

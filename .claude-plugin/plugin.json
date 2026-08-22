@@ -1,8 +1,8 @@
 {
   "name": "waypoint",
   "displayName": "Waypoint",
-  "version": "0.1.3",
-  "description": "Attaches harness telemetry (agent, model, host, branch, changed files) to Waypoint run claims, checkpoints and completions automatically. Pair with the Waypoint MCP server from claude mcp add.",
+  "version": "0.2.0",
+  "description": "Attaches harness telemetry (agent, model, host, branch, changed files) to Waypoint run claims, checkpoints and completions, and suspends the agent while a blocking decision waits for the operator. Pair with the Waypoint MCP server from claude mcp add.",
   "author": {
     "name": "nldlabs"
   },
@@ -11,6 +11,7 @@
     "waypoint",
     "mcp",
     "agents",
-    "telemetry"
+    "telemetry",
+    "decisions"
   ]
 }

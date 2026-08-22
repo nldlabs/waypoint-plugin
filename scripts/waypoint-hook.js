@@ -16,7 +16,10 @@
  * exits 0, so the tool call proceeds unmodified.
  *
  * Invocation:
- *   node waypoint-hook.js [--harness <name>] [--event pretooluse|sessionstart|collect]
+ *   node waypoint-hook.js [--harness <name>] [--event pretooluse|posttooluse|sessionstart|collect]
+ *
+ * PreToolUse on waypoint_await_decision and PostToolUse on waypoint_raise_decision /
+ * waypoint_propose_plan suspend the agent until the operator answers (see decision-wait.js).
  *
  * Input formats recognised on stdin:
  *   Claude Code / Codex / VS Code: { hook_event_name, tool_name, tool_input, cwd, model?, transcript_path?, session_id? }
@@ -33,6 +36,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const decisionWait = require('./decision-wait');
 
 const TOOL_SUFFIXES = ['waypoint_start_run', 'waypoint_checkpoint_run', 'waypoint_complete_run'];
 const FILE_CAP = 200;
@@ -254,11 +258,22 @@ function enrichToolInput(toolName, input, telemetry, gitInfo) {
   return next;
 }
 
-function main() {
+const debug = (...parts) => { if (process.env.WAYPOINT_DEBUG) process.stderr.write(`[waypoint-hook] ${parts.join(' ')}
+`); };
+
+async function main() {
   const options = parseArgs(process.argv.slice(2));
+  debug('args', JSON.stringify(options));
   const payload = readStdin();
+  debug('stdin read', Object.keys(payload).join(','));
   const event = options.event
     || String(payload.hook_event_name || (payload.toolName !== undefined ? 'PreToolUse' : '')).toLowerCase();
+  // A harness interrupt that reaches us ends the wait quietly; the server abandons the
+  // wait once the polls stop, so there is nothing else to do.
+  const abort = new AbortController();
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    try { process.on(sig, () => abort.abort()); } catch { /* not every platform has every signal */ }
+  }
 
   if (event === 'collect') {
     const telemetry = collectTelemetry(payload, options);
@@ -279,13 +294,26 @@ function main() {
     return;
   }
 
-  if (event !== 'pretooluse') return;
-
   const copilotCli = payload.toolName !== undefined && payload.tool_name === undefined;
   const toolName = copilotCli ? payload.toolName : payload.tool_name;
-  if (!matchedTool(toolName)) return;
-
   const toolInput = copilotCli ? payload.toolArgs : payload.tool_input;
+
+  // Decision wait: the agent raised a blocking decision (PostToolUse) or is asking to
+  // wait for one (PreToolUse). Either way the hook holds the turn until it is closed.
+  if (event === 'posttooluse') {
+    const out = await decisionWait.handlePost({ payload, toolName, toolInput, copilotCli, signal: abort.signal });
+    if (out) process.stdout.write(JSON.stringify(out));
+    return;
+  }
+  if (event !== 'pretooluse') return;
+  if (decisionWait.isAwaitTool(toolName)) {
+    debug('await tool; calling handleAwait');
+    const out = await decisionWait.handleAwait({ payload, toolName, toolInput, copilotCli, signal: abort.signal });
+    debug('handleAwait returned', out ? 'output' : 'nothing');
+    if (out) process.stdout.write(JSON.stringify(out));
+    return;
+  }
+  if (!matchedTool(toolName)) return;
   const telemetry = collectTelemetry(payload, options);
   const gitInfo = collectGit(telemetry.cwd);
   const updated = enrichToolInput(toolName, toolInput, telemetry, gitInfo);
@@ -310,12 +338,9 @@ function main() {
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch {
-    // Never block the tool call.
-  }
-  process.exitCode = 0;
+  // Nothing is left open when main() settles (no keep-alive sockets, no timers), so the
+  // process ends on its own; a failure must never block the tool call.
+  main().catch(() => { /* Never block the tool call. */ }).finally(() => { process.exitCode = 0; });
 } else {
   module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union };
 }

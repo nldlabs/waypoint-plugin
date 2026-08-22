@@ -14,7 +14,15 @@
         "type": "command",
         "bash": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event pretooluse",
         "powershell": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event pretooluse",
-        "timeoutSec": 15
+        "timeoutSec": 1800
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event posttooluse",
+        "powershell": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event posttooluse",
+        "timeoutSec": 1800
       }
     ]
   }

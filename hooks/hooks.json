@@ -21,6 +21,28 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "mcp__(plugin_waypoint_)?waypoint__waypoint_await_decision",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event pretooluse",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__(plugin_waypoint_)?waypoint__waypoint_(raise_decision|propose_plan)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event posttooluse",
+            "timeout": 1800
+          }
+        ]
       }
     ]
   }

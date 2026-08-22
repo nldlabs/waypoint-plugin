@@ -207,7 +207,8 @@ test('installer writes per-harness files, never a token, and merges on re-run', 
   run(['vscode']);
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   assert.deepEqual(settings.permissions.allow, ['Bash']);
-  assert.equal(settings.hooks.PreToolUse.length, 2);
+  // The operator's own 'Bash' entry plus the plugin's two PreToolUse entries (run telemetry, decision wait).
+  assert.equal(settings.hooks.PreToolUse.length, 3);
 
   for (const file of ['.codex/hooks.json', '.github/hooks/waypoint.json', '.vscode/mcp.json', '.claude/settings.json']) {
     assert.doesNotMatch(fs.readFileSync(path.join(repo, file), 'utf8'), /Bearer [A-Za-z0-9]{20,}/);
