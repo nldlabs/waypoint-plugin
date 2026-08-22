@@ -38,7 +38,7 @@ function mcpServer(script, { record = [] } = {}) {
       res.end(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: JSON.stringify(payload) }] } }));
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}/mcp`, calls: () => calls, close: () => new Promise((done) => server.close(done)) })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}/mcp`, calls: () => calls, close: () => new Promise((done) => { if (server.closeAllConnections) server.closeAllConnections(); server.close(() => done()); }) })));
 }
 
 // Asynchronous on purpose: the stand-in server lives in this process, so a synchronous
@@ -197,10 +197,13 @@ test('as a child process against a stand-in MCP server', async (t) => {
     const child = spawn(process.execPath, [HOOK], { env: { ...process.env, ...fastEnv(mcp.url, { WAYPOINT_WAIT_TIME_SCALE: '1' }) }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stdin.end(JSON.stringify(awaitCall('sess-term')));
+    // Listen before the wait: with a stale state file the hook can finish its chunk and exit
+    // before the kill, and an exit listener attached afterwards would wait forever (WP-0637).
+    const exited = new Promise((resolve) => child.on('exit', (exitCode, signal) => resolve({ exitCode, signal })));
+    child.stdin.end(JSON.stringify(awaitCall('sess-term-' + process.pid + '-' + Date.now())));
     await new Promise((resolve) => setTimeout(resolve, 400));
     child.kill('SIGTERM');
-    const code = await new Promise((resolve) => child.on('exit', (exitCode, signal) => resolve({ exitCode, signal })));
+    const code = await exited;
     assert.equal(stdout.trim(), '');
     assert.ok(code.exitCode === 0 || code.signal === 'SIGTERM' || code.exitCode === null);
   });

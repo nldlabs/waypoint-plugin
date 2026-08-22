@@ -37,7 +37,7 @@ function mcpServer(script, { record = [] } = {}) {
       res.end(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: JSON.stringify(payload) }] } }));
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}/mcp`, calls: () => calls, close: () => new Promise((done) => server.close(done)) })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}/mcp`, calls: () => calls, close: () => new Promise((done) => { if (server.closeAllConnections) server.closeAllConnections(); server.close(() => done()); }) })));
 }
 
 function runHook(payload, env, args = []) {
