@@ -120,6 +120,21 @@ Nothing here tries to stop you stopping the agent.
 - State is per session and per decision under the OS temp dir, so several agents on one
   machine never share a wait. `WAYPOINT_WAIT_DISABLE=1` turns the feature off.
 
+## Waiting for work
+
+An agent with nothing to do can park itself in Waypoint's **agent queue** by calling
+`waypoint_await_work`. The hook joins on its behalf — attaching harness, model, host, the
+working directory and the git repositories it can reach (the one it is in, plus siblings
+and children, with remote and branch) — and then polls exactly like the decision wait
+until you **send it a message from the dashboard** (Waiting for work panel). The agent
+resumes in the same turn with your instructions and is told to act on them, then to call
+`waypoint_await_work` again with `after=<message id>` to rejoin the queue. An agent whose
+polls stop drops off the panel within about 6 minutes.
+
+Same knobs as the decision wait: `WAYPOINT_WAIT_CHUNK_SECONDS`, `WAYPOINT_WAIT_MAX_SECONDS`,
+`WAYPOINT_WAIT_DISABLE=1` (the workspace is still attached; nothing is polled). State is
+one file per session under the OS temp dir, so a chunked wait keeps its place in the queue.
+
 ## Layout
 
 ```
@@ -128,6 +143,7 @@ Nothing here tries to stop you stopping the agent.
 hooks/hooks.json                  SessionStart + PreToolUse + PostToolUse hooks (Claude Code)
 scripts/waypoint-hook.js          the hook — one entry point for every harness
 scripts/decision-wait.js          suspends the agent until a blocking decision is answered
+scripts/work-wait.js              parks an idle agent in the queue until the operator sends it work
 scripts/install.js                writes Codex / Copilot / VS Code config into a repo
 templates/                        what install.js renders
 test/                             node --test (no dependencies)

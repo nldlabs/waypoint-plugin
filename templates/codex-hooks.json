@@ -23,7 +23,7 @@
         ]
       },
       {
-        "matcher": "mcp__waypoint__waypoint_await_decision",
+        "matcher": "mcp__waypoint__waypoint_(await_decision|await_work)",
         "hooks": [
           {
             "type": "command",

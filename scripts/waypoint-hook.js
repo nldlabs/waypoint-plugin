@@ -20,6 +20,9 @@
  *
  * PreToolUse on waypoint_await_decision and PostToolUse on waypoint_raise_decision /
  * waypoint_propose_plan suspend the agent until the operator answers (see decision-wait.js).
+ * PreToolUse on waypoint_await_work joins the agent queue with the workspace and the
+ * repositories in reach, and suspends the agent until the operator sends it a message
+ * (see work-wait.js).
  *
  * Input formats recognised on stdin:
  *   Claude Code / Codex / VS Code: { hook_event_name, tool_name, tool_input, cwd, model?, transcript_path?, session_id? }
@@ -37,6 +40,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const decisionWait = require('./decision-wait');
+const workWait = require('./work-wait');
 
 const TOOL_SUFFIXES = ['waypoint_start_run', 'waypoint_checkpoint_run', 'waypoint_complete_run'];
 const FILE_CAP = 200;
@@ -310,6 +314,14 @@ async function main() {
     debug('await tool; calling handleAwait');
     const out = await decisionWait.handleAwait({ payload, toolName, toolInput, copilotCli, signal: abort.signal });
     debug('handleAwait returned', out ? 'output' : 'nothing');
+    if (out) process.stdout.write(JSON.stringify(out));
+    return;
+  }
+  if (workWait.isAwaitWorkTool(toolName)) {
+    debug('await_work tool; calling handleAwaitWork');
+    const telemetry = collectTelemetry(payload, options);
+    const out = await workWait.handleAwaitWork({ payload, toolName, toolInput, copilotCli, telemetry, git, signal: abort.signal });
+    debug('handleAwaitWork returned', out ? 'output' : 'nothing');
     if (out) process.stdout.write(JSON.stringify(out));
     return;
   }
