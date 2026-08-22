@@ -9,7 +9,7 @@
       "name": "waypoint",
       "source": "./",
       "description": "Connects the Waypoint MCP server and attaches agent, model, host, branch and changed-file telemetry to run claims, checkpoints and completions automatically.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "waypoint",
         "mcp",

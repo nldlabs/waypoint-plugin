@@ -1,7 +1,7 @@
 {
   "name": "waypoint",
   "displayName": "Waypoint",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Connects the Waypoint MCP server and attaches harness telemetry (agent, model, host, branch, changed files) to run claims, checkpoints and completions automatically.",
   "author": {
     "name": "nldlabs"
