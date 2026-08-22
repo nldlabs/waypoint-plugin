@@ -191,7 +191,7 @@ test('installer writes per-harness files, never a token, and merges on re-run', 
   const run = (args) => execFileSync(process.execPath, [INSTALL, ...args, '--dir', repo, '--url', 'https://api.example.test/mcp'], { encoding: 'utf8' });
 
   const first = run(['all']);
-  for (const line of ['create: .codex/hooks.json', 'create: .github/hooks/waypoint.json', 'create: .vscode/mcp.json', 'create: .claude/settings.json', 'bearer_token_env_var = "WAYPOINT_TOKEN"', 'Waypoint-Plugin']) {
+  for (const line of ['create: .codex/hooks.json', 'create: .github/hooks/waypoint.json', 'create: .vscode/mcp.json', 'create: .claude/settings.json', 'bearer_token_env_var = "WAYPOINT_TOKEN"', 'waypoint-plugin']) {
     assert.ok(first.includes(line), line);
   }
   const copilot = JSON.parse(fs.readFileSync(path.join(repo, '.github', 'hooks', 'waypoint.json'), 'utf8'));

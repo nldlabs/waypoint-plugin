@@ -31,7 +31,7 @@ In Claude Code (desktop app, VS Code extension or CLI), everything happens in th
 prompt box:
 
 1. Type `/plugin` and press Enter.
-2. **Marketplaces** → **Add marketplace** → enter `nldlabs/Waypoint-Plugin`.
+2. **Marketplaces** → **Add marketplace** → enter `nldlabs/waypoint-plugin`.
 3. **Discover** → **Waypoint** → **Install** → choose the **User** scope.
 4. A dialog asks for the **MCP URL** and **agent token** — paste them.
 5. Start a new session. Done.
@@ -42,7 +42,7 @@ Later: `/plugin` → **Installed** → Waypoint → *Configure* to change the UR
 Terminal equivalent:
 
 ```bash
-claude plugin marketplace add nldlabs/Waypoint-Plugin
+claude plugin marketplace add nldlabs/waypoint-plugin
 claude plugin install waypoint@waypoint --scope user
 ```
 
