@@ -9,7 +9,7 @@
       "name": "waypoint",
       "source": "./",
       "description": "Attaches harness telemetry (agent, model, host, branch, changed files) and the shell commands you ran (with exit codes, as commands and checks) to Waypoint run claims, checkpoints and completions, suspends the agent while a blocking decision waits for the operator, and parks an idle agent in the Waypoint queue until the operator sends it work. Pair with the Waypoint MCP server from claude mcp add.",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "keywords": [
         "waypoint",
         "mcp",

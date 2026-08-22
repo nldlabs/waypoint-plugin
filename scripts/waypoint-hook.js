@@ -296,7 +296,7 @@ async function main() {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch, changed files, and the shell commands you run (with exit codes, as commands + checks) are attached to waypoint_start_run/checkpoint_run/complete_run automatically — do not report them by hand.`,
+        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch, changed files and your shell commands (exit codes, as commands + checks) attach to waypoint_start_run/checkpoint_run/complete_run automatically — do not report them by hand. Push your branch (git push -u origin <branch>) before every checkpoint and before completing.`,
       },
     }));
     return;
