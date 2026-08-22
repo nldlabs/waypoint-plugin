@@ -25,26 +25,26 @@ Open **Connect agent** in the sidebar and copy:
 
 The plugin never writes the token to a file.
 
-## Claude Code — install from the menu
+## Claude Code — one command
 
-In Claude Code (desktop app, VS Code extension or CLI), everything happens in the
-prompt box:
-
-1. Type `/plugin` and press Enter.
-2. **Marketplaces** → **Add marketplace** → enter `nldlabs/waypoint-plugin`.
-3. **Discover** → **Waypoint** → **Install** → choose the **User** scope.
-4. A dialog asks for the **MCP URL** and **agent token** — paste them.
-5. Start a new session. Done.
-
-Later: `/plugin` → **Installed** → Waypoint → *Configure* to change the URL or token;
-**Marketplaces** → *Update* to get a newer version.
-
-Terminal equivalent:
+Paste this in a terminal, replacing the two placeholders with the values from
+*Connect agent* (the dashboard's own snippet already has the first line filled in):
 
 ```bash
-claude plugin marketplace add nldlabs/waypoint-plugin
-claude plugin install waypoint@waypoint --scope user
+claude mcp add --transport http --scope user waypoint <MCP_URL> --header "Authorization: Bearer <AGENT_TOKEN>" && claude plugin marketplace add nldlabs/waypoint-plugin && claude plugin install waypoint@waypoint --scope user
 ```
+
+That adds the Waypoint MCP server to your user config and installs the plugin, which is
+hooks-only: it attaches the telemetry to the three run tools of whatever `waypoint`
+server is connected. Start a new session. Done.
+
+Prefer the menu for the plugin half? In the desktop app, VS Code or CLI: `/plugin` →
+**Marketplaces** → add `nldlabs/waypoint-plugin` → **Discover** → **Waypoint** →
+**Install** (User scope). The MCP server half still needs the `claude mcp add` line —
+this Claude Code build has no dialog for a plugin to ask for a URL and token.
+
+Later: **Marketplaces** → *Update* picks up new plugin versions; `claude mcp remove
+waypoint` / re-run the first line rotates the token.
 
 > Claude Code only applies a hook's rewritten input alongside a permission decision, so
 > the hook auto-allows these three Waypoint tools (they are the run's own bookkeeping).
@@ -98,9 +98,8 @@ bounds `agent` like any other field.
 ## Layout
 
 ```
-.claude-plugin/plugin.json        Claude Code plugin manifest (asks for URL + token at install)
+.claude-plugin/plugin.json        Claude Code plugin manifest (hooks-only)
 .claude-plugin/marketplace.json   this repo is its own marketplace
-.mcp.json                         the Waypoint MCP server
 hooks/hooks.json                  SessionStart + PreToolUse hooks (Claude Code)
 scripts/waypoint-hook.js          the hook — one script for every harness
 scripts/install.js                writes Codex / Copilot / VS Code config into a repo

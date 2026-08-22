@@ -8,8 +8,8 @@
     {
       "name": "waypoint",
       "source": "./",
-      "description": "Connects the Waypoint MCP server and attaches agent, model, host, branch and changed-file telemetry to run claims, checkpoints and completions automatically.",
-      "version": "0.1.1",
+      "description": "Attaches harness telemetry (agent, model, host, branch, changed files) to Waypoint run claims, checkpoints and completions automatically. Pair with the Waypoint MCP server from claude mcp add.",
+      "version": "0.1.2",
       "keywords": [
         "waypoint",
         "mcp",

@@ -164,7 +164,7 @@ test('as a child process against a real git repo', async (t) => {
   });
 });
 
-test('manifests: plugin and marketplace agree, the install dialog asks for URL and token', () => {
+test('manifests: plugin and marketplace agree; the plugin is hooks-only (MCP comes from claude mcp add)', () => {
   const marketplace = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude-plugin', 'marketplace.json'), 'utf8'));
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
   assert.equal(marketplace.name, 'waypoint');
@@ -173,18 +173,14 @@ test('manifests: plugin and marketplace agree, the install dialog asks for URL a
   assert.equal(entry.source, './');
   assert.equal(manifest.name, 'waypoint');
   assert.equal(manifest.version, entry.version, 'bump plugin.json and marketplace.json together');
-  assert.deepEqual(manifest.userConfig.mcp_url.required, true);
-  assert.equal(manifest.userConfig.token.sensitive, true);
-  for (const field of Object.values(manifest.userConfig)) { assert.ok(field.title); assert.ok(field.description); }
-  // Claude Code auto-loads .mcp.json and hooks/hooks.json; naming them in the manifest is a duplicate-load error.
+  // No MCP server and no userConfig: this Claude Code build has no settings dialog, so the
+  // server is added with `claude mcp add` and the hook matcher covers mcp__waypoint__*.
+  assert.ok(!fs.existsSync(path.join(ROOT, '.mcp.json')));
+  assert.equal(manifest.userConfig, undefined);
   assert.equal(manifest.mcpServers, undefined); assert.equal(manifest.hooks, undefined);
-  for (const rel of ['.mcp.json', 'hooks/hooks.json']) assert.ok(fs.existsSync(path.join(ROOT, rel)), rel);
-  const mcp = JSON.parse(fs.readFileSync(path.join(ROOT, '.mcp.json'), 'utf8'));
-  assert.equal(mcp.mcpServers.waypoint.url, '${user_config.mcp_url}');
-  assert.equal(mcp.mcpServers.waypoint.headers.Authorization, 'Bearer ${user_config.token}');
   const hooks = fs.readFileSync(path.join(ROOT, 'hooks', 'hooks.json'), 'utf8');
-  assert.ok(!hooks.includes('user_config'));
-  assert.ok(hooks.includes('${CLAUDE_PLUGIN_ROOT}'));
+  assert.ok(hooks.includes('mcp__(plugin_waypoint_)?waypoint__waypoint_(start_run|checkpoint_run|complete_run)'));
+  assert.ok(hooks.includes(''));
 });
 
 test('installer writes per-harness files, never a token, and merges on re-run', async (t) => {
