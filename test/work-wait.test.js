@@ -190,7 +190,7 @@ test('as a child process against a stand-in MCP server', async (t) => {
     assert.equal(out.hookSpecificOutput.updatedInput.waiterId, undefined);
     assert.equal(out.hookSpecificOutput.updatedInput.agent.harness, 'codex');
     assert.equal(out.hookSpecificOutput.updatedInput.workspace.repositories[0].url, 'https://github.com/nldlabs/waypoint.git');
-    assert.equal(out.hookSpecificOutput.additionalContext, undefined);
+    assert.match(out.hookSpecificOutput.additionalContext, /could not find the MCP URL and token.*call waypoint_await_work again straight away/);
   });
 
   await t.test('WAYPOINT_WAIT_DISABLE=1 attaches the workspace and stays out of the way', async () => {
@@ -199,5 +199,6 @@ test('as a child process against a stand-in MCP server', async (t) => {
     const out = await runHook(awaitCall(here, 'work-off'), fastEnv(mcp.url, { WAYPOINT_WAIT_DISABLE: '1' }));
     assert.equal(mcp.calls(), 0);
     assert.equal(out.hookSpecificOutput.updatedInput.workspace.cwd, here.replace(/\\/g, '/'));
+    assert.match(out.hookSpecificOutput.additionalContext, /wait is disabled.*Keep your place in the queue yourself/);
   });
 });

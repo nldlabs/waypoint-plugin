@@ -84,12 +84,24 @@ function fromClaude(home, cwd) {
 function fromCodex(home, env) {
   let text;
   try { text = fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8'); } catch { return undefined; }
-  const section = text.split(/\n(?=\[)/).find((block) => /^\[mcp_servers\.waypoint\]/.test(block.trim()));
+  const blocks = text.split(/\n(?=\[)/);
+  const section = blocks.find((block) => /^\[mcp_servers\.waypoint\]/.test(block.trim()));
   if (!section) return undefined;
-  const url = (section.match(/^\s*url\s*=\s*"([^"]+)"/m) || [])[1];
+  // Two shapes: a native `url = "..."` server, or the mcp-remote form where the URL and
+  // an `Authorization:${VAR}` header sit in `args` and VAR lives in [mcp_servers.waypoint.env].
+  const envBlock = blocks.find((block) => /^\[mcp_servers\.waypoint\.env\]/.test(block.trim())) || '';
+  const url = (section.match(/^\s*url\s*=\s*"([^"]+)"/m) || [])[1] || (section.match(/"(https?:\/\/[^"\s]+)"/) || [])[1];
   if (!url) return undefined;
-  const header = (section.match(/Authorization"?\s*=\s*"Bearer\s+([^"]+)"/i) || [])[1];
-  if (header) return { url, token: header.trim(), source: 'codex' };
+  const lookup = (name) => {
+    const match = envBlock.match(new RegExp(`^\\s*${name}\\s*=\\s*"([^"]*)"`, 'm'));
+    return match ? match[1] : env[name];
+  };
+  const expand = (value) => String(value || '').replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => lookup(name) || '');
+  const header = (section.match(/Authorization"?\s*=\s*"([^"]+)"/i) || section.match(/"Authorization:\s*([^"]+)"/i) || [])[1];
+  if (header) {
+    const token = expand(header).trim().replace(/^Bearer\s+/i, '').trim();
+    if (token && !token.includes('${')) return { url, token, source: 'codex' };
+  }
   const envName = (section.match(/^\s*bearer_token_env_var\s*=\s*"([^"]+)"/m) || [])[1];
   if (envName && env[envName]) return { url, token: env[envName], source: 'codex' };
   return undefined;

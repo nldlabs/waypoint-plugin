@@ -112,7 +112,7 @@ Nothing here tries to stop you stopping the agent.
 - Works in Claude Code, Codex and Copilot (CLI and VS Code) with the hooks above; the hook
   reads the MCP URL and token from `WAYPOINT_MCP_URL` / `WAYPOINT_TOKEN`, else from the
   harness's own MCP config (`~/.claude.json`, `~/.codex/config.toml`,
-  `~/.copilot/mcp-config.json`). VS Code's `.vscode/mcp.json` keeps the token as a secret
+  `~/.copilot/mcp-config.json` — both the native `url = "..."` server and the `npx mcp-remote <url> --header Authorization:${VAR}` form with `[mcp_servers.waypoint.env]`). VS Code's `.vscode/mcp.json` keeps the token as a secret
   input the hook cannot read — export the two env vars there.
 - One hook invocation waits at most `WAYPOINT_WAIT_CHUNK_SECONDS` (default 1500) before
   handing back to the model with "call await again"; total wait is capped by

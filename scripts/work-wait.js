@@ -215,9 +215,11 @@ async function handleAwaitWork({ payload, toolName, toolInput, copilotCli, telem
         ...(context ? { additionalContext: context } : {}),
       },
     });
-  if (env.WAYPOINT_WAIT_DISABLE === '1') return allow(enriched);
+  // Without a way to poll, say so: left alone the model calls once and wanders off.
+  const selfPoll = 'so it cannot poll Waypoint on your behalf. Keep your place in the queue yourself: while the result says status "waiting", call waypoint_await_work again straight away with the returned waiterId and waitSeconds 20, and stop only when a message arrives or the operator dismisses you.';
+  if (env.WAYPOINT_WAIT_DISABLE === '1') return allow(enriched, `The Waypoint plugin wait is disabled (WAYPOINT_WAIT_DISABLE=1), ${selfPoll}`);
   const endpoint = decisionWait.resolveEndpoint(env, os.homedir(), cwd);
-  if (!endpoint) return allow(enriched);
+  if (!endpoint) return allow(enriched, `The Waypoint plugin could not find the MCP URL and token for this machine (set WAYPOINT_MCP_URL and WAYPOINT_TOKEN in the environment, or configure the waypoint server with a Bearer header in ~/.claude.json, ~/.codex/config.toml or ~/.copilot/mcp-config.json), ${selfPoll}`);
   const file = decisionWait.stateFile(decisionWait.sessionKey(payload, env), 'work');
   // The ack of a handled message is the model's to make; the hook only passes it once.
   const result = await waitForWork({ endpoint, input: enriched, stateFile: file, env, signal, call });
