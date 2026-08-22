@@ -11,13 +11,17 @@
  * Options:
  *   --url <mcp url>         Waypoint MCP endpoint, e.g. https://api.example.com/mcp
  *                           (default: $WAYPOINT_MCP_URL)
- *   --token-env <NAME>      Environment variable that holds the agent token (default WAYPOINT_TOKEN)
+ *   --token <value>         Agent token. When given, the user-level MCP config is
+ *                           written too (~/.codex/config.toml, ~/.copilot/mcp-config.json)
+ *                           so the install is one command with no manual editing.
+ *   --token-env <NAME>      Without --token: the env var that will hold the token (default WAYPOINT_TOKEN)
  *   --dir <repo root>       Repository to write into (default: current directory)
  *   --force                 Overwrite files this installer owns outright
  *   --dry-run               Print what would be written and exit
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -29,14 +33,18 @@ function parseArgs(argv) {
   const options = {
     targets: [],
     url: process.env.WAYPOINT_MCP_URL || '',
+    token: '',
     tokenEnv: 'WAYPOINT_TOKEN',
     dir: process.cwd(),
+    home: os.homedir(),
     force: false,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--url') options.url = argv[++i] || '';
+    else if (arg === '--token') options.token = argv[++i] || '';
+    else if (arg === '--home') options.home = path.resolve(argv[++i] || options.home);
     else if (arg === '--token-env') options.tokenEnv = argv[++i] || options.tokenEnv;
     else if (arg === '--dir') options.dir = path.resolve(argv[++i] || '.');
     else if (arg === '--force') options.force = true;
@@ -51,7 +59,23 @@ function parseArgs(argv) {
 }
 
 function usage() {
-  return fs.readFileSync(__filename, 'utf8').split('\n').slice(2, 19).map((line) => line.replace(/^ \*\s?/, '')).join('\n');
+  return fs.readFileSync(__filename, 'utf8').split('\n').slice(2, 22).map((line) => line.replace(/^ \*\s?/, '')).join('\n');
+}
+
+// Append a TOML table to ~/.codex/config.toml unless a [mcp_servers.waypoint]
+// table is already there — TOML has no safe generic merge, so present wins.
+function appendCodexConfig(options, url) {
+  const file = path.join(options.home, '.codex', 'config.toml');
+  const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  if (current.includes('[mcp_servers.waypoint]')) {
+    return { file, action: 'skip ([mcp_servers.waypoint] already present)' };
+  }
+  const block = `\n[mcp_servers.waypoint]\nurl = ${JSON.stringify(url)}\nhttp_headers = { "Authorization" = ${JSON.stringify(`Bearer ${options.token}`)} }\n`;
+  if (!options.dryRun) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, block);
+  }
+  return { file, action: current ? 'append' : 'create' };
 }
 
 // Paths in generated config are relative to the repo root where that is
@@ -134,30 +158,39 @@ function install(options) {
   for (const target of options.targets) {
     if (target === 'claude') {
       // Claude Code loads the plugin directory directly; nothing to write.
-      const pluginDir = toPosix(path.relative(options.dir, PLUGIN_ROOT) || '.');
+      const header = options.token ? ` --header ${JSON.stringify(`Authorization: Bearer ${options.token}`)}` : '';
       notes.push(
-        `Claude Code: no files to write. In Claude Code type /plugin, open Marketplaces, add the plugin repository\n` +
-        `  (local path ${toPosix(PLUGIN_ROOT)} or nldlabs/waypoint-plugin on GitHub), then install "waypoint" from Discover;\n` +
-        `  the install dialog asks for the MCP URL and token. Terminal equivalent:\n` +
-        `    claude plugin marketplace add ${toPosix(PLUGIN_ROOT)} && claude plugin install waypoint@waypoint --scope user\n` +
-        `  or for one session only: claude --plugin-dir ${pluginDir.startsWith('.') ? pluginDir : `./${pluginDir}`}`
+        `Claude Code: one command does everything (MCP server + plugin):\n` +
+        `    claude mcp add --transport http --scope user waypoint ${url}${header} && claude plugin marketplace add nldlabs/waypoint-plugin && claude plugin install waypoint@waypoint --scope user\n` +
+        `  or for one session only: claude --plugin-dir ${toPosix(PLUGIN_ROOT)}`
       );
     }
     if (target === 'codex') {
       results.push(writeFile(at('.codex', 'hooks.json'), render('codex-hooks.json', { ...vars, __WAYPOINT_HOOK__: vars.__WAYPOINT_HOOK_ABS__ }), options, { mergeJson: mergeHooks }));
-      notes.push(
-        `Codex: add this to ~/.codex/config.toml (or ${toPosix(at('.codex', 'config.toml'))}) and export ${options.tokenEnv}:\n\n` +
-        render('codex-config.toml', vars).split('\n').filter((line) => !line.startsWith('#') && line.trim()).map((line) => `    ${line}`).join('\n') +
-        `\n  Hooks were written to .codex/hooks.json (hooks are on by default in current Codex; \`[features] hooks = true\` enables them if yours are off).`
-      );
+      if (options.token) {
+        results.push(appendCodexConfig(options, url));
+        notes.push('Codex: server written to ~/.codex/config.toml, hooks to .codex/hooks.json. Nothing else to do.');
+      } else {
+        notes.push(
+          `Codex: add this to ~/.codex/config.toml (or ${toPosix(at('.codex', 'config.toml'))}) and export ${options.tokenEnv}:\n\n` +
+          render('codex-config.toml', vars).split('\n').filter((line) => !line.startsWith('#') && line.trim()).map((line) => `    ${line}`).join('\n') +
+          `\n  Hooks were written to .codex/hooks.json (hooks are on by default in current Codex; \`[features] hooks = true\` enables them if yours are off).`
+        );
+      }
     }
     if (target === 'copilot') {
       results.push(writeFile(at('.github', 'hooks', 'waypoint.json'), render('copilot-hooks.json', vars), options, { mergeJson: mergeHooks }));
-      notes.push(
-        `Copilot CLI: add the server to ~/.copilot/mcp-config.json (export ${options.tokenEnv} first):\n\n` +
-        render('copilot-mcp-config.json', vars).split('\n').map((line) => `    ${line}`).join('\n') +
-        `\n  Hooks were written to .github/hooks/waypoint.json; Copilot CLI and the Copilot cloud agent load hooks from there.`
-      );
+      if (options.token) {
+        const server = { mcpServers: { waypoint: { type: 'http', url, headers: { Authorization: `Bearer ${options.token}` }, tools: ['*'] } } };
+        results.push(writeFile(path.join(options.home, '.copilot', 'mcp-config.json'), JSON.stringify(server, null, 2) + '\n', options, { mergeJson: mergeServers('mcpServers') }));
+        notes.push('Copilot: server written to ~/.copilot/mcp-config.json, hooks to .github/hooks/waypoint.json. Nothing else to do.');
+      } else {
+        notes.push(
+          `Copilot CLI: add the server to ~/.copilot/mcp-config.json (export ${options.tokenEnv} first):\n\n` +
+          render('copilot-mcp-config.json', vars).split('\n').map((line) => `    ${line}`).join('\n') +
+          `\n  Hooks were written to .github/hooks/waypoint.json; Copilot CLI and the Copilot cloud agent load hooks from there.`
+        );
+      }
     }
     if (target === 'vscode') {
       results.push(writeFile(at('.vscode', 'mcp.json'), render('vscode-mcp.json', vars), options, { mergeJson: mergeServers('servers') }));
@@ -188,7 +221,11 @@ function main() {
     console.error('No MCP URL: pass --url https://…/mcp or set WAYPOINT_MCP_URL (Connect agent in the dashboard shows it).');
   }
   const { results, notes } = install(options);
-  for (const result of results) console.log(`${options.dryRun ? '[dry-run] ' : ''}${result.action}: ${toPosix(path.relative(options.dir, result.file) || result.file)}`);
+  for (const result of results) {
+    const rel = path.relative(options.dir, result.file);
+    const shown = !rel || rel.startsWith('..') ? toPosix(result.file) : toPosix(rel);
+    console.log(`${options.dryRun ? '[dry-run] ' : ''}${result.action}: ${shown}`);
+  }
   if (notes.length) console.log('\nNext steps\n' + notes.map((note) => `- ${note}`).join('\n\n'));
 }
 

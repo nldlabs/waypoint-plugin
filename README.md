@@ -50,28 +50,31 @@ waypoint` / re-run the first line rotates the token.
 > the hook auto-allows these three Waypoint tools (they are the run's own bookkeeping).
 > Set `WAYPOINT_HOOK_DECISION=ask` if you would rather keep the prompt.
 
-## GitHub Copilot and Codex
+## GitHub Copilot and Codex — one command
 
-These read the URL and token from your shell:
+Run the installer **in the repository you are working on**, with the two values from
+*Connect agent* as flags. It clones this plugin to `~/.waypoint-plugin`, writes the
+hook configuration into the repo, and writes the MCP server into your user config —
+nothing to edit by hand:
 
 ```bash
-export WAYPOINT_MCP_URL="https://…/mcp"
-export WAYPOINT_TOKEN="<agent token>"
+git clone -q --depth 1 https://github.com/nldlabs/waypoint-plugin "$HOME/.waypoint-plugin" 2>/dev/null; node "$HOME/.waypoint-plugin/scripts/install.js" codex copilot --url "<MCP_URL>" --token "<AGENT_TOKEN>"
 ```
 
-(PowerShell: `$env:WAYPOINT_MCP_URL = "…"; $env:WAYPOINT_TOKEN = "…"`.)
+PowerShell:
 
-Then, from a checkout of this repo, run the installer **in the repository you are
-working on** — it writes the hook configuration there and prints the one snippet you
-need to add to your user config:
+```bash
+if (!(Test-Path "$HOME/.waypoint-plugin")) { git clone -q --depth 1 https://github.com/nldlabs/waypoint-plugin "$HOME/.waypoint-plugin" }; node "$HOME/.waypoint-plugin/scripts/install.js" codex copilot --url "<MCP_URL>" --token "<AGENT_TOKEN>"
+```
 
-| Agent | Command | Writes | You add |
-| --- | --- | --- | --- |
-| VS Code (Copilot agent mode) | `node <plugin>/scripts/install.js vscode --url $WAYPOINT_MCP_URL` | `.vscode/mcp.json` (prompts for the token on first start), hooks in `.claude/settings.json` | nothing — start the server from the MCP view |
-| Copilot CLI / cloud agent | `node <plugin>/scripts/install.js copilot --url $WAYPOINT_MCP_URL` | `.github/hooks/waypoint.json` | the printed server block to `~/.copilot/mcp-config.json` |
-| Codex | `node <plugin>/scripts/install.js codex --url $WAYPOINT_MCP_URL` | `.codex/hooks.json` | the printed `[mcp_servers.waypoint]` block to `~/.codex/config.toml` |
+Pick the targets you use: `codex` writes `~/.codex/config.toml` + `.codex/hooks.json`;
+`copilot` writes `~/.copilot/mcp-config.json` + `.github/hooks/waypoint.json` (read by
+Copilot CLI and the Copilot cloud agent); `vscode` writes `.vscode/mcp.json` (prompts
+for the token in VS Code's own UI) + hooks in `.claude/settings.json`; `all` does
+everything. Re-running merges rather than overwrites; `--dry-run` previews.
 
-`all` does every one; re-running merges rather than overwrites; `--dry-run` previews.
+Prefer to keep the token out of user config files? Omit `--token` and the installer
+prints the env-var snippets (`WAYPOINT_TOKEN`) to paste instead.
 
 ## Check it works
 

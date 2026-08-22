@@ -214,3 +214,33 @@ test('installer writes per-harness files, never a token, and merges on re-run', 
   }
   assert.ok(run(['copilot', '--dry-run']).includes('[dry-run]'));
 });
+
+test('--token makes codex and copilot one-command: user-level MCP config is written and re-runs are safe', async (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'waypoint-token-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'waypoint-home-'));
+  t.after(() => { fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  const run = (args) => execFileSync(process.execPath, [INSTALL, ...args, '--dir', repo, '--home', home, '--url', 'https://api.example.test/mcp', '--token', 'tok_secret_123'], { encoding: 'utf8' });
+
+  const first = run(['codex', 'copilot', 'claude']);
+  assert.ok(first.includes('Nothing else to do'));
+  assert.ok(first.includes('claude mcp add --transport http --scope user waypoint https://api.example.test/mcp --header "Authorization: Bearer tok_secret_123"'));
+
+  const toml = fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8');
+  assert.ok(toml.includes('[mcp_servers.waypoint]'));
+  assert.ok(toml.includes('url = "https://api.example.test/mcp"'));
+  assert.ok(toml.includes('"Authorization" = "Bearer tok_secret_123"'));
+
+  const copilot = JSON.parse(fs.readFileSync(path.join(home, '.copilot', 'mcp-config.json'), 'utf8'));
+  assert.equal(copilot.mcpServers.waypoint.url, 'https://api.example.test/mcp');
+  assert.equal(copilot.mcpServers.waypoint.headers.Authorization, 'Bearer tok_secret_123');
+
+  // Re-run: the TOML block is not duplicated, the JSON merges, other servers survive.
+  fs.writeFileSync(path.join(home, '.copilot', 'mcp-config.json'), JSON.stringify({ mcpServers: { other: { type: 'http', url: 'https://other' }, waypoint: { stale: true } } }));
+  const second = run(['codex', 'copilot']);
+  assert.ok(second.includes('skip ([mcp_servers.waypoint] already present)'));
+  assert.equal((fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8').match(/\[mcp_servers\.waypoint\]/g) || []).length, 1);
+  const merged = JSON.parse(fs.readFileSync(path.join(home, '.copilot', 'mcp-config.json'), 'utf8'));
+  assert.equal(merged.mcpServers.other.url, 'https://other');
+  assert.equal(merged.mcpServers.waypoint.headers.Authorization, 'Bearer tok_secret_123');
+  assert.equal(merged.mcpServers.waypoint.stale, undefined);
+});
