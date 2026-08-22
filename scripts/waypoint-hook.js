@@ -11,6 +11,9 @@
  *   agent.harness / model / host / os / user / cwd / plugin   (telemetry)
  *   branch, repositoryUrl                                     (start_run, if absent)
  *   files, commits                                            (checkpoint/complete: git-derived, unioned)
+ *   commands, checks                                          (checkpoint/complete: shell commands the agent ran since
+ *                                                              the last checkpoint, recorded by PostToolUse on the shell
+ *                                                              tool, with exit codes; see command-log.js)
  *
  * Zero dependencies, never fails the call: on any error it prints nothing and
  * exits 0, so the tool call proceeds unmodified.
@@ -41,6 +44,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const decisionWait = require('./decision-wait');
 const workWait = require('./work-wait');
+const commandLog = require('./command-log');
 
 const TOOL_SUFFIXES = ['waypoint_start_run', 'waypoint_checkpoint_run', 'waypoint_complete_run'];
 const FILE_CAP = 200;
@@ -292,7 +296,7 @@ async function main() {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch and changed files are attached to waypoint_start_run/checkpoint_run/complete_run automatically — do not report them by hand.`,
+        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch, changed files, and the shell commands you run (with exit codes, as commands + checks) are attached to waypoint_start_run/checkpoint_run/complete_run automatically — do not report them by hand.`,
       },
     }));
     return;
@@ -304,6 +308,11 @@ async function main() {
 
   // Decision wait: the agent raised a blocking decision (PostToolUse) or is asking to
   // wait for one (PreToolUse). Either way the hook holds the turn until it is closed.
+  // Shell commands (WP-0594): remember what ran and how it ended, for the next checkpoint.
+  if ((event === 'posttooluse' || event === 'posttoolusefailure') && commandLog.isShellTool(toolName)) {
+    commandLog.recordShellResult({ payload, toolName, copilotCli, failed: event === 'posttoolusefailure' });
+    return;
+  }
   if (event === 'posttooluse') {
     // Agent queue: the real waypoint_await_work has returned; poll with its waiterId until
     // the operator sends a command (work-wait.js).
@@ -332,8 +341,15 @@ async function main() {
   if (!matchedTool(toolName)) return;
   const telemetry = collectTelemetry(payload, options);
   const gitInfo = collectGit(telemetry.cwd);
-  const updated = enrichToolInput(toolName, toolInput, telemetry, gitInfo);
+  let updated = enrichToolInput(toolName, toolInput, telemetry, gitInfo);
   if (!updated) return;
+  // Shell evidence: a new run starts with a clean slate; checkpoints and completion take
+  // everything recorded since the last one (command-log.js).
+  try {
+    const pending = commandLog.pendingEntries(payload.session_id || payload.sessionId, telemetry.cwd);
+    if (matchedTool(toolName) !== 'waypoint_start_run') updated = commandLog.attachCommandEvidence(updated, pending.entries);
+    if (pending.entries.length) commandLog.markAttached(pending.file, pending.log);
+  } catch { /* evidence is best effort */ }
 
   if (copilotCli) {
     process.stdout.write(JSON.stringify({ modifiedArgs: updated }));

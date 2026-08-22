@@ -43,6 +43,16 @@
             "timeout": 1800
           }
         ]
+      },
+      {
+        "matcher": "Bash|shell|local_shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__WAYPOINT_HOOK__\" --harness codex --event posttooluse",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }

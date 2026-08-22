@@ -9,9 +9,9 @@ It does two things:
 1. **Configures the Waypoint MCP server** for your agent.
 2. **Attaches telemetry automatically.** A hook intercepts `waypoint_start_run`,
    `waypoint_checkpoint_run` and `waypoint_complete_run` and fills in what the harness
-   already knows — agent, model, host, branch, changed files, unpushed commits — so the
-   model never has to report it by hand (and never gets it wrong). The dashboard shows
-   it on every run.
+   already knows — agent, model, host, branch, changed files, unpushed commits, and the
+   shell commands the agent ran with their exit codes — so the model never has to report
+   it by hand (and never gets it wrong). The dashboard shows it on every run.
 
 The hook is plain Node (22+), has no dependencies, and never blocks a call: if anything
 goes wrong it stays silent and the tool call proceeds unchanged.
@@ -94,9 +94,13 @@ node scripts/waypoint-hook.js --event collect --harness claude-code
 | `agent.host`, `os`, `user`, `cwd`, `plugin` | the machine | all three |
 | `branch`, `repositoryUrl` | git (only if the model left them blank) | `start_run` |
 | `files`, `commits` | uncommitted changes + commits not yet pushed, merged with what the model listed (caps 200 / 100) | `checkpoint_run`, `complete_run` |
+| `commands`, `checks` | every shell command run since the last checkpoint (recorded by a PostToolUse hook on the harness's shell tool — `Bash`/`PowerShell` in Claude Code), with exit codes; typecheck / test / build / lint / e2e commands also become named checks, latest per name, `required: false` | `checkpoint_run`, `complete_run` |
 
-Fields the model supplies explicitly always win. The Waypoint server validates and
-bounds `agent` like any other field.
+Fields the model supplies explicitly always win (a check the model names replaces the
+derived one of the same name). `waypoint_start_run` resets the command log, so a session
+that does several runs never carries one run's commands into the next. The log lives in
+the OS temp dir (`waypoint-hook/<session>-commands.json`), never in the repository. The
+Waypoint server validates and bounds `agent` like any other field.
 
 ## Waiting for decisions
 

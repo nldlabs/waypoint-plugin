@@ -43,6 +43,28 @@
             "timeout": 1800
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event posttooluse",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event posttoolusefailure",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
