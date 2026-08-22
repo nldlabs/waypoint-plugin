@@ -123,10 +123,11 @@ Nothing here tries to stop you stopping the agent.
 ## Waiting for work
 
 An agent with nothing to do can park itself in Waypoint's **agent queue** by calling
-`waypoint_await_work`. The hook joins on its behalf — attaching harness, model, host, the
-working directory and the git repositories it can reach (the one it is in, plus siblings
-and children, with remote and branch) — and then polls exactly like the decision wait
-until you **send it a command from the dashboard** (Waiting for work panel). The agent
+`waypoint_await_work`. The PreToolUse hook attaches harness, model, host, the working
+directory and the git repositories it can reach (the one it is in, plus siblings and
+children, with remote and branch); the call runs and returns a `waiterId`; then the
+PostToolUse hook polls with that id — the same way the decision wait does — until you
+**send it a command from the dashboard** (Waiting for work panel). The agent
 resumes in the same turn with your command and is told to execute it, then to call
 `waypoint_await_work` again with `after=<message id>` and `reply=<its report>` — the report
 shows on the dashboard row — and keep waiting. The queue polls every ~30 s (20 s server

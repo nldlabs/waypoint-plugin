@@ -1,19 +1,25 @@
 'use strict';
 /**
- * Work wait — the agent queue half of the Waypoint hook (WP-0595).
+ * Work wait — the agent queue half of the Waypoint hook (WP-0595, WP-0601, WP-0602).
  *
- * An agent with nothing to do calls waypoint_await_work. The PreToolUse hook on that tool
- * does what the decision wait does, turned around: it joins the queue on the agent's
- * behalf (the first poll creates the entry and returns a waiterId), attaches what the
- * machine already knows — harness, model, host, cwd, the repositories in reach — and
- * then polls Waypoint with the same back-off until the operator sends a message. Only
- * then does the real tool call go through, with the waiterId and waitSeconds: 0, so the
- * model sees one ordinary tool result carrying the operator's instructions.
+ * An agent with nothing to do calls waypoint_await_work. Two hooks cooperate:
  *
- * Every poll is the heartbeat: an entry that goes unpolled longer than `waiterGraceMs`
- * drops off the dashboard. A stopped agent therefore needs no cleanup here.
+ *   PreToolUse  (fast)  attaches what the machine already knows — harness, model, host,
+ *                       cwd, the repositories in reach — to the call's input. No network.
+ *   PostToolUse (slow)  runs after the real call returned: it reads the waiterId from the
+ *                       tool result and polls Waypoint with it, every ~30 s, until the
+ *                       operator sends a command, then hands the command to the model as
+ *                       additional context with the instruction to execute it, report back
+ *                       (after + reply) and keep waiting.
  *
- * Shares transport, credentials, schedule and state helpers with decision-wait.js.
+ * Why PostToolUse rather than holding the call in PreToolUse: the real call has already
+ * been permitted and executed, so the queue entry the dashboard shows is one whose agent
+ * really is waiting; the waiterId comes from the server, not from the hook joining on the
+ * model's behalf; and harnesses that ignore updatedInput still get the wait. Every poll is
+ * the heartbeat: an entry that goes unpolled longer than `waiterGraceMs` drops off the
+ * dashboard, so a stopped agent needs no cleanup here.
+ *
+ * Shares transport, credentials, session-state helpers with decision-wait.js.
  */
 
 const fs = require('fs');
@@ -25,7 +31,7 @@ const AWAIT_WORK_TOOL = 'waypoint_await_work';
 const SERVER_HOLD_SECONDS = 20;
 const DEFAULT_CHUNK_SECONDS = 25 * 60;
 const DEFAULT_MAX_SECONDS = 6 * 60 * 60;
-const DEFAULT_GRACE_MS = 6 * 60 * 1000;
+const DEFAULT_GRACE_MS = 3 * 60 * 1000;
 const MAX_CONSECUTIVE_ERRORS = 10;
 const ERROR_SCHEDULE = [5, 10, 20];
 const REPO_CAP = 25;
@@ -91,27 +97,42 @@ const sleep = (ms, signal) => new Promise((resolve) => {
   if (signal) signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
 });
 
+function writeState(file, state) {
+  try { fs.writeFileSync(file, JSON.stringify(state)); } catch { /* best effort */ }
+}
+function clearState(file) {
+  try { fs.unlinkSync(file); } catch { /* already gone */ }
+}
+function readState(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+}
+
+/** Seconds between polls: flat, jittered, and always under the server's grace. */
+function queueGapSeconds(graceMs = DEFAULT_GRACE_MS) {
+  const ceiling = Math.max(5, Math.floor(graceMs / 1000) - SERVER_HOLD_SECONDS - 15);
+  return Math.min(QUEUE_GAP_SECONDS * (0.9 + Math.random() * 0.2), ceiling);
+}
+
 /**
- * Join (or resume) the queue and poll until a message lands, the chunk or total budget
- * is spent, the server keeps failing, or the process is told to stop. Returns
- * { status, response?, waiterId?, reason?, polls, waitedMs, holdSeconds }.
+ * Poll the entry `waiterId` until a command lands, the chunk or total budget is spent, the
+ * server keeps failing, or the process is told to stop. Returns
+ * { status, response?, waiterId, reason?, polls, waitedMs, holdSeconds }.
  */
 async function waitForWork(options) {
   const {
-    endpoint, input, stateFile: file, env = process.env,
+    endpoint, waiterId, stateFile: file, env = process.env,
     chunkMs = Number(env.WAYPOINT_WAIT_CHUNK_SECONDS || DEFAULT_CHUNK_SECONDS) * 1000,
     maxMs = Number(env.WAYPOINT_WAIT_MAX_SECONDS || DEFAULT_MAX_SECONDS) * 1000,
     timeScale = Number(env.WAYPOINT_WAIT_TIME_SCALE || 1),
     call = decisionWait.callTool, signal,
   } = options;
   const state = readState(file);
-  let waiterId = input.waiterId || state.waiterId;
-  // A fresh join (no waiterId) starts the back-off from the top; a resumed wait continues it.
-  const resumed = Boolean(waiterId && state.waiterId === waiterId);
-  const startedAt = resumed && state.startedAt ? state.startedAt : Date.now();
-  let attempt = resumed ? Number(state.attempt || 0) : 0;
+  // Same waiter as last chunk: the total budget continues; a new waiter starts it afresh.
+  const resumed = Boolean(state.waiterId === waiterId && state.startedAt);
+  const startedAt = resumed ? state.startedAt : Date.now();
   let graceMs = Number(state.graceMs || DEFAULT_GRACE_MS);
   let holdSeconds = Number(state.holdSeconds || SERVER_HOLD_SECONDS);
+  let attempt = resumed ? Number(state.attempt || 0) : 0;
   let errors = 0;
   let polls = 0;
   const chunkStarted = Date.now();
@@ -121,14 +142,13 @@ async function waitForWork(options) {
   for (;;) {
     if (signal && signal.aborted) return { status: 'aborted', waiterId, polls, waitedMs: Date.now() - chunkStarted, holdSeconds };
     let response;
-    dbg('poll', attempt, waiterId || '(join)', endpoint.url);
+    dbg('poll', attempt, waiterId, endpoint.url);
     try {
-      response = await call(endpoint, AWAIT_WORK_TOOL, { ...input, ...(waiterId ? { waiterId } : {}), waitSeconds: holdSeconds });
+      response = await call(endpoint, AWAIT_WORK_TOOL, { waiterId, waitSeconds: holdSeconds });
       errors = 0;
       polls += 1;
-      if (response && response.waiterId) waiterId = response.waiterId;
       if (response && Number(response.waiterGraceMs) > 0) graceMs = Number(response.waiterGraceMs);
-      dbg('poll result', response && response.status, waiterId);
+      dbg('poll result', response && response.status);
     } catch (error) {
       errors += 1;
       if (/^HTTP 5\d\d/.test(String(error && error.message)) && holdSeconds > 5) holdSeconds = Math.max(5, Math.floor(holdSeconds / 2));
@@ -142,7 +162,7 @@ async function waitForWork(options) {
       return { status: 'dismissed', response, waiterId, polls, waitedMs: Date.now() - chunkStarted, holdSeconds };
     }
     if (response && response.status === 'message') {
-      // Keep the waiterId for the rejoin; the back-off starts over next time.
+      // Keep the waiterId; the next wait (after the ack) starts its budget over.
       writeState(file, { waiterId, graceMs, holdSeconds, lastPollAt: Date.now() });
       return { status: 'message', response, waiterId, polls, waitedMs: Date.now() - chunkStarted, holdSeconds };
     }
@@ -154,41 +174,27 @@ async function waitForWork(options) {
   }
 }
 
-/** Seconds between polls: flat, jittered, and always under the server's grace. */
-function queueGapSeconds(graceMs = DEFAULT_GRACE_MS) {
-  const ceiling = Math.max(5, Math.floor(graceMs / 1000) - SERVER_HOLD_SECONDS - 15);
-  return Math.min(QUEUE_GAP_SECONDS * (0.9 + Math.random() * 0.2), ceiling);
-}
-
-function writeState(file, state) {
-  try { fs.writeFileSync(file, JSON.stringify(state)); } catch { /* best effort */ }
-}
-function clearState(file) {
-  try { fs.unlinkSync(file); } catch { /* already gone */ }
-}
-function readState(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+function commandContext(message, waiterId) {
+  const where = message.projectId ? ` (project ${message.projectId}${message.workId ? `, work ${message.workId}` : ''})` : '';
+  return `Command from the operator${where}: "${message.text}". Execute it now — if it names a project or work, call waypoint_get_project_context, claim with waypoint_start_run, and checkpoint as usual. When it is done, report back and rejoin the queue in one call: waypoint_await_work with waiterId ${waiterId}, after "${message.id}", and reply = a short report of what you did and found (ids, branches, outcomes; the operator reads it on the dashboard). Then keep waiting for the next command.`;
 }
 
 function describeOutcome(result) {
   const r = result.response || {};
   const id = result.waiterId || r.waiterId;
-  if (result.status === 'message' && r.message) {
-    const where = r.message.projectId ? ` (project ${r.message.projectId}${r.message.workId ? `, work ${r.message.workId}` : ''})` : '';
-    return `Command from the operator${where}: "${r.message.text}". Execute it now — if it names a project or work, call waypoint_get_project_context, claim with waypoint_start_run, and checkpoint as usual. When it is done, report back and rejoin the queue in one call: waypoint_await_work with waiterId ${id}, after "${r.message.id}", and reply = a short report of what you did and found (ids, branches, outcomes; the operator reads it on the dashboard). Then keep waiting for the next command.`;
-  }
+  if (result.status === 'message' && r.message) return commandContext(r.message, id);
   if (result.status === 'dismissed') return 'The operator removed you from the agent queue. Stop waiting; rejoin with waypoint_await_work (no waiterId) only if asked to.';
   if (result.status === 'waiting') {
     const minutes = Math.round(result.waitedMs / 60000);
     return result.reason === 'max'
-      ? `No message arrived in the maximum wait (${minutes} min). Stop waiting and say so; the operator can message you later if you rejoin.`
-      : `Still waiting for work; the Waypoint hook polled for ${minutes} min. Call waypoint_await_work again immediately with waiterId ${id} to keep your place in the queue.`;
+      ? `No command arrived in the maximum wait (${minutes} min). Stop waiting and say so; the operator can command you later if you rejoin.`
+      : `Still waiting for a command; the Waypoint hook polled for ${minutes} min. Call waypoint_await_work again immediately with waiterId ${id} to keep your place in the queue.`;
   }
-  if (result.status === 'error') return `Waypoint could not be reached while waiting for work (${result.reason}). Call waypoint_await_work again in a minute${id ? ` with waiterId ${id}` : ''}.`;
+  if (result.status === 'error') return `Waypoint could not be reached while waiting for a command (${result.reason}). Call waypoint_await_work again in a minute${id ? ` with waiterId ${id}` : ''}.`;
   return undefined;
 }
 
-/** The input the real call (and every poll) carries: what the model said, filled in from the machine. */
+/** The input the real call carries: what the model said, filled in from the machine. */
 function enrichInput(toolInput, telemetry, workspace) {
   const current = toolInput && typeof toolInput === 'object' ? toolInput : {};
   const agent = { ...((telemetry && telemetry.agent) || {}), ...(current.agent && typeof current.agent === 'object' ? current.agent : {}) };
@@ -205,51 +211,63 @@ function enrichInput(toolInput, telemetry, workspace) {
 }
 
 /**
- * PreToolUse on waypoint_await_work. Always enriches the input; polls when Waypoint
- * credentials are in reach. Returns the hook's stdout JSON, or undefined to let the
- * call through untouched.
+ * PreToolUse on waypoint_await_work: attach agent telemetry and the workspace. Never
+ * waits, never touches the network. Returns the hook's stdout JSON, or undefined.
  */
-async function handleAwaitWork({ payload, toolName, toolInput, copilotCli, telemetry, git, env = process.env, signal, call }) {
+function handleAwaitWork({ payload, toolName, toolInput, copilotCli, telemetry, git }) {
   if (!isAwaitWorkTool(toolName)) return undefined;
   const cwd = payload.cwd || process.cwd();
   const workspace = git ? collectWorkspace(cwd, git) : { cwd };
   const enriched = enrichInput(toolInput, telemetry, workspace);
-  const allow = (updated, context) => (copilotCli
-    ? { permissionDecision: 'allow', permissionDecisionReason: 'Waypoint plugin attached workspace and waited for work', modifiedArgs: updated }
-    : {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'allow',
-        permissionDecisionReason: 'Waypoint plugin attached workspace and waited for work',
-        updatedInput: updated,
-        ...(context ? { additionalContext: context } : {}),
-      },
-    });
+  if (copilotCli) return { permissionDecision: 'allow', permissionDecisionReason: 'Waypoint plugin attached agent telemetry and workspace', modifiedArgs: enriched };
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      permissionDecisionReason: 'Waypoint plugin attached agent telemetry and workspace',
+      updatedInput: enriched,
+    },
+  };
+}
+
+/**
+ * PostToolUse on waypoint_await_work: the call has returned; if it says "waiting", poll
+ * with its waiterId until a command arrives and append the command as context. A result
+ * that already carries a command (the model acked one while another was queued) is
+ * restated as context too, so the instruction to execute is never missed. Returns the
+ * hook's stdout JSON, or undefined.
+ */
+async function handlePostAwaitWork({ payload, toolName, copilotCli, env = process.env, signal, call }) {
+  if (!isAwaitWorkTool(toolName)) return undefined;
+  const result = decisionWait.parseToolResult(payload, copilotCli);
+  if (!result || typeof result !== 'object' || !result.waiterId) return undefined;
+  const out = (context) => (copilotCli ? { additionalContext: context } : { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } });
+  if (result.status === 'message' && result.message) return out(commandContext(result.message, result.waiterId));
+  if (result.status === 'dismissed') return out(describeOutcome({ status: 'dismissed' }));
+  if (result.status !== 'waiting') return undefined;
   // Without a way to poll, say so: left alone the model calls once and wanders off.
-  const selfPoll = 'so it cannot poll Waypoint on your behalf. Keep your place in the queue yourself: while the result says status "waiting", call waypoint_await_work again straight away with the returned waiterId and waitSeconds 20, and stop only when a message arrives or the operator dismisses you.';
-  if (env.WAYPOINT_WAIT_DISABLE === '1') return allow(enriched, `The Waypoint plugin wait is disabled (WAYPOINT_WAIT_DISABLE=1), ${selfPoll}`);
-  const endpoint = decisionWait.resolveEndpoint(env, os.homedir(), cwd);
-  if (!endpoint) return allow(enriched, `The Waypoint plugin could not find the MCP URL and token for this machine (set WAYPOINT_MCP_URL and WAYPOINT_TOKEN in the environment, or configure the waypoint server with a Bearer header in ~/.claude.json, ~/.codex/config.toml or ~/.copilot/mcp-config.json), ${selfPoll}`);
+  const selfPoll = `so it cannot poll Waypoint on your behalf. Keep your place in the queue yourself: call waypoint_await_work again straight away with waiterId ${result.waiterId} and waitSeconds 20, and keep doing so while the result says status "waiting"; stop only when a command arrives or the operator dismisses you.`;
+  if (env.WAYPOINT_WAIT_DISABLE === '1') return out(`The Waypoint plugin wait is disabled (WAYPOINT_WAIT_DISABLE=1), ${selfPoll}`);
+  const endpoint = decisionWait.resolveEndpoint(env, os.homedir(), payload.cwd || process.cwd());
+  if (!endpoint) return out(`The Waypoint plugin could not find the MCP URL and token for this machine (set WAYPOINT_MCP_URL and WAYPOINT_TOKEN in the environment, or configure the waypoint server with a Bearer header in ~/.claude.json, ~/.codex/config.toml or ~/.copilot/mcp-config.json), ${selfPoll}`);
   const file = decisionWait.stateFile(decisionWait.sessionKey(payload, env), 'work');
-  // The ack of a handled message is the model's to make; the hook only passes it once.
-  const result = await waitForWork({ endpoint, input: enriched, stateFile: file, env, signal, call });
-  if (result.status === 'aborted') return undefined;
-  const closed = result.status === 'message' || result.status === 'dismissed';
-  const updated = { ...enriched, ...(result.waiterId ? { waiterId: result.waiterId } : {}), waitSeconds: closed ? 0 : (result.holdSeconds || SERVER_HOLD_SECONDS) };
-  // `after` was consumed by the first poll; sending it again on the real call would re-clear nothing harmful, but drop it for clarity.
-  if (closed) delete updated.after;
-  return allow(updated, describeOutcome(result));
+  const outcome = await waitForWork({ endpoint, waiterId: result.waiterId, stateFile: file, env, signal, call });
+  if (outcome.status === 'aborted') return undefined;
+  const context = describeOutcome(outcome);
+  return context ? out(context) : undefined;
 }
 
 module.exports = {
   AWAIT_WORK_TOOL,
   QUEUE_GAP_SECONDS,
   collectWorkspace,
-  queueGapSeconds,
+  commandContext,
   describeOutcome,
   enrichInput,
   handleAwaitWork,
+  handlePostAwaitWork,
   isAwaitWorkTool,
+  queueGapSeconds,
   readState,
   waitForWork,
 };

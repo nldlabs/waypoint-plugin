@@ -20,9 +20,9 @@
  *
  * PreToolUse on waypoint_await_decision and PostToolUse on waypoint_raise_decision /
  * waypoint_propose_plan suspend the agent until the operator answers (see decision-wait.js).
- * PreToolUse on waypoint_await_work joins the agent queue with the workspace and the
- * repositories in reach, and suspends the agent until the operator sends it a message
- * (see work-wait.js).
+ * PreToolUse on waypoint_await_work attaches the workspace and the repositories in reach;
+ * PostToolUse on it polls with the returned waiterId and suspends the agent until the
+ * operator sends it a command (see work-wait.js).
  *
  * Input formats recognised on stdin:
  *   Claude Code / Codex / VS Code: { hook_event_name, tool_name, tool_input, cwd, model?, transcript_path?, session_id? }
@@ -305,7 +305,11 @@ async function main() {
   // Decision wait: the agent raised a blocking decision (PostToolUse) or is asking to
   // wait for one (PreToolUse). Either way the hook holds the turn until it is closed.
   if (event === 'posttooluse') {
-    const out = await decisionWait.handlePost({ payload, toolName, toolInput, copilotCli, signal: abort.signal });
+    // Agent queue: the real waypoint_await_work has returned; poll with its waiterId until
+    // the operator sends a command (work-wait.js).
+    const out = workWait.isAwaitWorkTool(toolName)
+      ? await workWait.handlePostAwaitWork({ payload, toolName, copilotCli, signal: abort.signal })
+      : await decisionWait.handlePost({ payload, toolName, toolInput, copilotCli, signal: abort.signal });
     if (out) process.stdout.write(JSON.stringify(out));
     return;
   }
