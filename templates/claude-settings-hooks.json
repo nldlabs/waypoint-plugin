@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__WAYPOINT_HOOK__\" --event sessionstart",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__(plugin_waypoint_)?waypoint__waypoint_(start_run|checkpoint_run|complete_run)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__WAYPOINT_HOOK__\" --event pretooluse",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

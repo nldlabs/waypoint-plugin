@@ -1,0 +1,7 @@
+# Append to ~/.codex/config.toml (or <repo>/.codex/config.toml).
+# The bearer token is read from the environment variable named here; it is
+# never written to disk by this plugin.
+
+[mcp_servers.waypoint]
+url = "__WAYPOINT_MCP_URL__"
+bearer_token_env_var = "__WAYPOINT_TOKEN_ENV__"

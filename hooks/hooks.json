@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event sessionstart",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__(plugin_waypoint_)?waypoint__waypoint_(start_run|checkpoint_run|complete_run)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event pretooluse",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

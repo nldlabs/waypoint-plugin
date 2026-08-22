@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "waypoint": {
+      "type": "http",
+      "url": "__WAYPOINT_MCP_URL__",
+      "headers": {
+        "Authorization": "Bearer ${__WAYPOINT_TOKEN_ENV__}"
+      },
+      "tools": ["*"]
+    }
+  }
+}

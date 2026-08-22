@@ -1,0 +1,19 @@
+{
+  "inputs": [
+    {
+      "id": "waypoint-token",
+      "type": "promptString",
+      "description": "Waypoint agent token (Connect agent in the dashboard)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "waypoint": {
+      "type": "http",
+      "url": "__WAYPOINT_MCP_URL__",
+      "headers": {
+        "Authorization": "Bearer ${input:waypoint-token}"
+      }
+    }
+  }
+}

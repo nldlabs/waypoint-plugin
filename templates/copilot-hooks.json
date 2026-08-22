@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event sessionstart",
+        "powershell": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event sessionstart",
+        "timeoutSec": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event pretooluse",
+        "powershell": "node \"__WAYPOINT_HOOK__\" --harness copilot-cli --event pretooluse",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}
