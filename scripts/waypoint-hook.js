@@ -50,6 +50,8 @@ const TOOL_SUFFIXES = ['waypoint_start_run', 'waypoint_checkpoint_run', 'waypoin
 const FILE_CAP = 200;
 const COMMIT_CAP = 100;
 const GIT_TIMEOUT_MS = 4000;
+const PR_TIMEOUT_MS = 5000;
+const PULL_REQUEST_CAP = 20;
 
 function readPluginVersion() {
   try {
@@ -228,6 +230,46 @@ function collectTelemetry(payload, options) {
   return { agent, cwd };
 }
 
+/**
+ * The pull request open for this branch, if the forge CLI on this machine can say (WP-0766):
+ * `gh pr view` (GitHub) then `glab mr view` (GitLab); Azure DevOps has no cheap equivalent.
+ * Nothing installed, not logged in, no PR → undefined, quietly and quickly.
+ */
+function collectPullRequest(cwd, branch) {
+  if (!branch || branch === 'HEAD' || branch === 'main' || branch === 'master') return undefined;
+  const run = (file, argv) => {
+    try {
+      return execFileSync(file, argv, { cwd, encoding: 'utf8', timeout: PR_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, shell: process.platform === 'win32' }).trim();
+    } catch { return ''; }
+  };
+  const fromGithub = run('gh', ['pr', 'view', branch, '--json', 'url,number,title,state,isDraft']);
+  if (fromGithub) {
+    try {
+      const pr = JSON.parse(fromGithub);
+      if (pr && pr.url) return { url: String(pr.url), number: Number(pr.number) || undefined, title: clip(pr.title, 300), state: pr.state === 'MERGED' ? 'merged' : pr.state === 'CLOSED' ? 'closed' : pr.isDraft ? 'draft' : 'open' };
+    } catch { /* not JSON: gh printed a human message */ }
+  }
+  const fromGitlab = run('glab', ['mr', 'view', branch, '--output', 'json']);
+  if (fromGitlab) {
+    try {
+      const mr = JSON.parse(fromGitlab);
+      if (mr && mr.web_url) return { url: String(mr.web_url), number: Number(mr.iid) || undefined, title: clip(mr.title, 300), state: mr.state === 'merged' ? 'merged' : mr.state === 'closed' ? 'closed' : (mr.draft || mr.work_in_progress) ? 'draft' : 'open' };
+    } catch { /* ditto */ }
+  }
+  return undefined;
+}
+
+/** Pull requests by URL, the newer report winning (WP-0766). */
+function mergePullRequests(existing, additions, cap) {
+  const byUrl = new Map();
+  for (const entry of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(additions) ? additions : [])]) {
+    if (!entry || typeof entry !== 'object' || !entry.url) continue;
+    const url = clip(entry.url, 500);
+    byUrl.set(url, { ...(byUrl.get(url) || {}), ...entry, url });
+  }
+  return [...byUrl.values()].slice(-cap);
+}
+
 function collectGit(cwd) {
   if (!git(cwd, ['rev-parse', '--is-inside-work-tree'])) return {};
   const branch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -268,6 +310,8 @@ function collectGit(cwd) {
     // How much of the work is still only on this machine (WP-0726): uncommitted paths and
     // commits the upstream has not got. Both are zero once the agent has committed and pushed.
     uncommitted: status ? status.split('\n').filter((line) => line.trim()).length : 0,
+    // The open pull request for this branch when gh/glab can tell (WP-0766); the server links it to the ticket.
+    pullRequest: collectPullRequest(cwd, branch),
   };
 }
 
@@ -370,6 +414,7 @@ function enrichToolInput(toolName, input, telemetry, gitInfo) {
   if (tool === 'waypoint_checkpoint_run' || tool === 'waypoint_complete_run') {
     if (gitInfo.files && gitInfo.files.length) next.files = union(current.files, gitInfo.files, FILE_CAP, 500);
     if (gitInfo.commits && gitInfo.commits.length) next.commits = union(current.commits, gitInfo.commits, COMMIT_CAP, 500);
+    if (gitInfo.pullRequest && gitInfo.pullRequest.url) next.pullRequests = mergePullRequests(current.pullRequests, [gitInfo.pullRequest], PULL_REQUEST_CAP);
   }
   return next;
 }
@@ -490,5 +535,5 @@ if (require.main === module) {
   // process ends on its own; a failure must never block the tool call.
   main().catch(() => { /* Never block the tool call. */ }).finally(() => { process.exitCode = 0; });
 } else {
-  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union, claimOnce, pushNudge, collectWorktrees, worktreeNudge };
+  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union, claimOnce, pushNudge, collectWorktrees, worktreeNudge, collectPullRequest, mergePullRequests };
 }
