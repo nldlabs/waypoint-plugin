@@ -289,6 +289,54 @@ function pushNudge(tool, gitInfo) {
   return `Waypoint: ${parts.join(' and ')} on ${branch}. Commit (message ending with the ticket id, e.g. "(WP-1234)") and push — git push -u origin ${branch} — ${when}; the dashboard links the ticket to its branch, commits and diff only from what is on the remote.`;
 }
 
+/**
+ * Other worktrees on this repository (WP-0763): the local witness that more than one agent
+ * is working here. `git worktree list --porcelain` lists the main worktree first; `others`
+ * are the ones that are not the directory we are in. Nothing to fetch, nothing to trust.
+ */
+function collectWorktrees(cwd) {
+  const list = git(cwd, ['worktree', 'list', '--porcelain']);
+  if (!list) return { total: 0, others: [], isMain: true };
+  const norm = (value) => String(value || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const entries = list.split(/\r?\n\s*\r?\n/).map((block) => {
+    const lines = block.split(/\r?\n/);
+    const worktree = (lines.find((line) => line.startsWith('worktree ')) || '').slice('worktree '.length).trim();
+    const branch = (lines.find((line) => line.startsWith('branch ')) || '').slice('branch '.length).replace(/^refs\/heads\//, '').trim();
+    return { path: worktree, branch: branch || undefined, bare: lines.some((line) => line.trim() === 'bare') };
+  }).filter((entry) => entry.path && !entry.bare);
+  const here = norm(git(cwd, ['rev-parse', '--show-toplevel']));
+  const others = entries.filter((entry) => norm(entry.path) !== here).map((entry) => ({ path: entry.path, branch: entry.branch }));
+  return { total: entries.length, others, isMain: entries.length ? norm(entries[0].path) === here : true };
+}
+
+/**
+ * What to tell the model when other worktrees exist (WP-0763): at session start from the
+ * main worktree (or from main/master anywhere), how to get its own; at a claim while on
+ * main, branch before editing; at a checkpoint/completion with work sitting on main, that
+ * another agent may be merging too. Quiet in a worktree of its own on its own branch, and
+ * always quiet when no other worktree exists.
+ */
+function worktreeNudge(event, tool, gitInfo, worktrees) {
+  const others = worktrees && Array.isArray(worktrees.others) ? worktrees.others : [];
+  if (!others.length) return undefined;
+  const branch = gitInfo && gitInfo.branch;
+  const onMain = branch === 'main' || branch === 'master';
+  const names = others.slice(0, 4).map((entry) => entry.branch || path.basename(String(entry.path || ''))).filter(Boolean).join(', ');
+  const count = `${others.length} other worktree${others.length === 1 ? '' : 's'} on this repository${names ? ` (${names})` : ''}`;
+  if (event === 'sessionstart') {
+    if (!(worktrees.isMain || onMain)) return undefined;
+    return `${count}: other agents are probably active here. Work in your own — git worktree add ../<repo>-wp-NNNN -b wp-NNNN-<slug>, then npm ci inside it (never junction node_modules into a worktree; git worktree remove follows the junction and deletes the target). Merge to main only when you are finishing the ticket, after git pull.`;
+  }
+  if (tool === 'waypoint_start_run' && onMain) {
+    return `Waypoint: you are on ${branch} with ${count}. Claim, then branch or worktree before editing: git worktree add ../<repo>-wp-NNNN -b wp-NNNN-<slug>.`;
+  }
+  const dirty = (Number(gitInfo && gitInfo.uncommitted) || 0) > 0 || (Array.isArray(gitInfo && gitInfo.commits) && gitInfo.commits.length > 0);
+  if ((tool === 'waypoint_checkpoint_run' || tool === 'waypoint_complete_run') && onMain && dirty) {
+    return `Waypoint: work is sitting directly on ${branch} while ${count} — another agent may be merging into it too. Commit on a wp-NNNN branch and merge --no-ff after git pull, or move the changes to a worktree.`;
+  }
+  return undefined;
+}
+
 function union(existing, additions, cap, maxLength) {
   const out = [];
   const seen = new Set();
@@ -353,10 +401,12 @@ async function main() {
     rememberSessionModel(payload.session_id || payload.sessionId, payload.model);
     const telemetry = collectTelemetry(payload, options);
     const summary = [telemetry.agent.harness, telemetry.agent.model, telemetry.agent.host].filter(Boolean).join(' · ');
+    // Multi-agent awareness (WP-0763): say so only when another worktree exists.
+    const worktreeLine = worktreeNudge('sessionstart', undefined, { branch: git(telemetry.cwd, ['rev-parse', '--abbrev-ref', 'HEAD']) }, collectWorktrees(telemetry.cwd));
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch, files and shell commands (exit codes → checks) attach to start_run/checkpoint_run/complete_run automatically — never retype them; the operator authorised this telemetry and the await_work repo list. Push your branch (git push -u origin <branch>) before every checkpoint and before completing.`,
+        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch, files and shell commands (exit codes → checks) attach to start_run/checkpoint_run/complete_run automatically — never retype them; the operator authorised this telemetry and the await_work repo list. Push your branch (git push -u origin <branch>) before every checkpoint and before completing.${worktreeLine ? ` ${worktreeLine}` : ''}`,
       },
     }));
     return;
@@ -412,7 +462,8 @@ async function main() {
     if (pending.entries.length) commandLog.markAttached(pending.file, pending.log);
   } catch { /* evidence is best effort */ }
 
-  const nudge = pushNudge(matchedTool(toolName), gitInfo);
+  // Push discipline (WP-0726) and multi-agent worktree awareness (WP-0763) share one line of context.
+  const nudge = [pushNudge(matchedTool(toolName), gitInfo), worktreeNudge(event, matchedTool(toolName), gitInfo, collectWorktrees(telemetry.cwd))].filter(Boolean).join('\n') || undefined;
   if (copilotCli) {
     process.stdout.write(JSON.stringify({ modifiedArgs: updated, ...(nudge ? { additionalContext: nudge } : {}) }));
     return;
@@ -439,5 +490,5 @@ if (require.main === module) {
   // process ends on its own; a failure must never block the tool call.
   main().catch(() => { /* Never block the tool call. */ }).finally(() => { process.exitCode = 0; });
 } else {
-  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union, claimOnce, pushNudge };
+  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union, claimOnce, pushNudge, collectWorktrees, worktreeNudge };
 }
