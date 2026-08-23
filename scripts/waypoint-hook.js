@@ -265,7 +265,28 @@ function collectGit(cwd) {
     repositoryUrl: repositoryUrl || undefined,
     files: [...files].map((file) => file.replace(/\\/g, '/')),
     commits,
+    // How much of the work is still only on this machine (WP-0726): uncommitted paths and
+    // commits the upstream has not got. Both are zero once the agent has committed and pushed.
+    uncommitted: status ? status.split('\n').filter((line) => line.trim()).length : 0,
   };
+}
+
+/**
+ * What to tell the model at a checkpoint or completion when its work has not left the
+ * machine (WP-0726): the dashboard links tickets to branches and commits it can read from
+ * the remote, so uncommitted or unpushed work is invisible there. Undefined when clean.
+ */
+function pushNudge(tool, gitInfo) {
+  if (tool !== 'waypoint_checkpoint_run' && tool !== 'waypoint_complete_run') return undefined;
+  const uncommitted = Number(gitInfo && gitInfo.uncommitted) || 0;
+  const unpushed = Array.isArray(gitInfo && gitInfo.commits) ? gitInfo.commits.length : 0;
+  if (!uncommitted && !unpushed) return undefined;
+  const parts = [];
+  if (uncommitted) parts.push(`${uncommitted} uncommitted change${uncommitted === 1 ? '' : 's'}`);
+  if (unpushed) parts.push(`${unpushed} commit${unpushed === 1 ? '' : 's'} not pushed`);
+  const branch = gitInfo && gitInfo.branch ? gitInfo.branch : '<branch>';
+  const when = tool === 'waypoint_complete_run' ? 'before this run counts as done' : 'before going on';
+  return `Waypoint: ${parts.join(' and ')} on ${branch}. Commit (message ending with the ticket id, e.g. "(WP-1234)") and push — git push -u origin ${branch} — ${when}; the dashboard links the ticket to its branch, commits and diff only from what is on the remote.`;
 }
 
 function union(existing, additions, cap, maxLength) {
@@ -391,8 +412,9 @@ async function main() {
     if (pending.entries.length) commandLog.markAttached(pending.file, pending.log);
   } catch { /* evidence is best effort */ }
 
+  const nudge = pushNudge(matchedTool(toolName), gitInfo);
   if (copilotCli) {
-    process.stdout.write(JSON.stringify({ modifiedArgs: updated }));
+    process.stdout.write(JSON.stringify({ modifiedArgs: updated, ...(nudge ? { additionalContext: nudge } : {}) }));
     return;
   }
   // Claude Code applies updatedInput only alongside an explicit permission
@@ -405,6 +427,9 @@ async function main() {
       permissionDecision: decision,
       permissionDecisionReason: 'Waypoint plugin attached harness telemetry',
       updatedInput: updated,
+      // Uncommitted or unpushed work at a checkpoint/completion: say so in the model's
+      // context (WP-0726); the server's ack repeats it for the unpushed commits it sees.
+      ...(nudge ? { additionalContext: nudge } : {}),
     },
   }));
 }
@@ -414,5 +439,5 @@ if (require.main === module) {
   // process ends on its own; a failure must never block the tool call.
   main().catch(() => { /* Never block the tool call. */ }).finally(() => { process.exitCode = 0; });
 } else {
-  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union, claimOnce };
+  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union, claimOnce, pushNudge };
 }
