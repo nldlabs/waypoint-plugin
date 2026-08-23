@@ -94,6 +94,7 @@ node scripts/waypoint-hook.js --event collect --harness claude-code
 | `agent.host`, `os`, `user`, `cwd`, `plugin` | the machine | all three |
 | `branch`, `repositoryUrl` | git (only if the model left them blank) | `start_run` |
 | `files`, `commits` | uncommitted changes + commits not yet pushed, merged with what the model listed (caps 200 / 100) | `checkpoint_run`, `complete_run` |
+| `workspace` | cwd + repositories in reach (remote + branch by default; local paths only with `WAYPOINT_WORKSPACE=full`; nothing with `off`) | `await_work` |
 | `note` | when the model gives none, a sentence built from the workspace (harness, cwd, repositories) so the operator can see what the agent can reach | `await_work` |
 | `commands`, `checks` | every shell command run since the last checkpoint (recorded by a PostToolUse hook on the harness's shell tool — `Bash`/`PowerShell` in Claude Code), with exit codes; typecheck / test / build / lint / e2e commands also become named checks, latest per name, `required: false` | `checkpoint_run`, `complete_run` |
 
@@ -143,12 +144,39 @@ Same knobs as the decision wait: `WAYPOINT_WAIT_CHUNK_SECONDS`, `WAYPOINT_WAIT_M
 `WAYPOINT_WAIT_DISABLE=1` (the workspace is still attached; nothing is polled). State is
 one file per session under the OS temp dir, so a chunked wait keeps its place in the queue.
 
+What leaves the machine with that call is governed by `WAYPOINT_WORKSPACE`: **`repos`**
+(default) sends the repositories in reach as remote URL + branch — what the dashboard
+matches assignments on — plus the working directory; `full` adds each repository's local
+path; `off` sends nothing beyond the agent telemetry. Local paths and URLs of sibling
+checkouts are the least useful part and the part a harness's safety reviewer is most
+likely to object to, so they are off by default.
+
+### Codex notes
+
+- **Auto-review.** With `approvals_reviewer = "auto_review"` Codex lets a reviewer model
+  judge every MCP tool call that is not pre-approved, and it rejects `waypoint_await_work`
+  ("metadata egress to an unverified destination") — the idle poll carries repository
+  names. The installer therefore pre-approves every Waypoint tool in `~/.codex/config.toml`
+  (`[mcp_servers.waypoint.tools.<tool>] approval_mode = "approve"`; re-running
+  `node scripts/install.js codex` on an existing config adds the missing tables and
+  touches nothing else). Every Waypoint tool talks only to your own Waypoint, so there is
+  nothing for a reviewer to weigh.
+- **Plugin marketplace.** Codex can install this repository as a plugin
+  (`waypoint@waypoint`); it then runs `hooks/hooks.json` itself. If you also ran the
+  installer you have two hook sources — Codex runs every matching hook, so the script
+  de-duplicates itself per tool call (the first process to claim a `tool_use_id` acts,
+  the other exits silently), but one source is tidier: keep the marketplace plugin and
+  delete `.codex/hooks.json`, or the reverse.
+- **Harness label.** The hook works out the harness from the payload first (Codex stamps
+  `turn_id`), so a Codex session reads as `codex` even when launched from a Claude Code
+  terminal or through the Claude-format plugin manifest.
+
 ## Layout
 
 ```
 .claude-plugin/plugin.json        Claude Code plugin manifest (hooks-only)
 .claude-plugin/marketplace.json   this repo is its own marketplace
-hooks/hooks.json                  SessionStart + PreToolUse + PostToolUse hooks (Claude Code)
+hooks/hooks.json                  SessionStart + PreToolUse + PostToolUse hooks (Claude Code; Codex loads it too as a plugin)
 scripts/waypoint-hook.js          the hook — one entry point for every harness
 scripts/decision-wait.js          suspends the agent until a blocking decision is answered
 scripts/work-wait.js              parks an idle agent in the queue until the operator sends it work

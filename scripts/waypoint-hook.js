@@ -92,11 +92,20 @@ function git(cwd, argv) {
   }
 }
 
+/**
+ * Which harness is running us. The payload is the most reliable witness: Codex stamps
+ * every turn-scoped hook payload with `turn_id` and Claude Code never does. Environment
+ * comes second and is deliberately narrow — Codex loads Claude-format plugins and sets
+ * CLAUDE_PLUGIN_ROOT as a compatibility alias, and a harness launched from another
+ * harness's terminal inherits its variables (WP-0720).
+ */
 function detectHarness(payload, env) {
   if (env.WAYPOINT_HARNESS) return env.WAYPOINT_HARNESS;
   if (payload && payload.toolName !== undefined && payload.tool_name === undefined) return 'copilot-cli';
-  if (env.CLAUDE_PLUGIN_ROOT || env.CLAUDECODE || env.CLAUDE_PROJECT_DIR || env.CLAUDE_CODE_ENTRYPOINT) return 'claude-code';
+  if (payload && payload.turn_id !== undefined) return 'codex';
+  if (env.CLAUDECODE || env.CLAUDE_PROJECT_DIR || env.CLAUDE_CODE_ENTRYPOINT) return 'claude-code';
   if (env.CODEX_HOME || env.CODEX_SANDBOX || env.CODEX_THREAD_ID) return 'codex';
+  if (env.CLAUDE_PLUGIN_ROOT && !env.PLUGIN_ROOT) return 'claude-code';
   if (env.COPILOT_CLI || env.COPILOT_AGENT || env.GITHUB_COPILOT_CLI) return 'copilot-cli';
   if (env.VSCODE_PID || env.TERM_PROGRAM === 'vscode') return 'copilot-vscode';
   return 'unknown';
@@ -124,6 +133,36 @@ function modelFromTranscript(transcriptPath) {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Run once per tool call even when two hook sources fire us (WP-0720): Codex loads every
+ * matching hook — a user's ~/.codex/hooks.json *and* a marketplace-installed plugin's
+ * hooks/hooks.json — so without this the telemetry is attached twice and, worse, two
+ * queue pollers run for one waiterId. First process to create the marker wins; a payload
+ * without a tool_use_id (older harnesses) is never deduplicated.
+ */
+function claimOnce(payload, event) {
+  const id = payload && (payload.tool_use_id || payload.toolUseId);
+  const session = payload && (payload.session_id || payload.sessionId);
+  if (!id || !session) return true;
+  const dir = path.join(os.tmpdir(), 'waypoint-hook', 'once');
+  const file = path.join(dir, `${String(session).replace(/[^A-Za-z0-9_.-]/g, '_')}-${String(id).replace(/[^A-Za-z0-9_.-]/g, '_')}-${event}`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.closeSync(fs.openSync(file, 'wx'));
+  } catch (error) {
+    if (error && error.code === 'EEXIST') return false;
+    return true; // cannot tell; better to run twice than not at all
+  }
+  try { // keep the marker directory small: drop markers older than an hour now and then
+    const entries = fs.readdirSync(dir);
+    if (entries.length > 200) {
+      const cutoff = Date.now() - 60 * 60 * 1000;
+      for (const entry of entries) { const full = path.join(dir, entry); try { if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full); } catch { /* raced */ } }
+    }
+  } catch { /* best effort */ }
+  return true;
 }
 
 function sessionCachePath(sessionId) {
@@ -296,7 +335,7 @@ async function main() {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch, changed files and your shell commands (exit codes, as commands + checks) attach to waypoint_start_run/checkpoint_run/complete_run automatically — do not report them by hand. Push your branch (git push -u origin <branch>) before every checkpoint and before completing.`,
+        additionalContext: `Waypoint plugin active (${summary}). Harness, model, host, branch, files and shell commands (exit codes → checks) attach to start_run/checkpoint_run/complete_run automatically — never retype them; the operator authorised this telemetry and the await_work repo list. Push your branch (git push -u origin <branch>) before every checkpoint and before completing.`,
       },
     }));
     return;
@@ -305,6 +344,7 @@ async function main() {
   const copilotCli = payload.toolName !== undefined && payload.tool_name === undefined;
   const toolName = copilotCli ? payload.toolName : payload.tool_name;
   const toolInput = copilotCli ? payload.toolArgs : payload.tool_input;
+  if (!claimOnce(payload, event)) { debug('another hook source already handled this tool call'); return; }
 
   // Decision wait: the agent raised a blocking decision (PostToolUse) or is asking to
   // wait for one (PreToolUse). Either way the hook holds the turn until it is closed.
@@ -374,5 +414,5 @@ if (require.main === module) {
   // process ends on its own; a failure must never block the tool call.
   main().catch(() => { /* Never block the tool call. */ }).finally(() => { process.exitCode = 0; });
 } else {
-  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union };
+  module.exports = { enrichToolInput, matchedTool, detectHarness, collectGit, collectTelemetry, union, claimOnce };
 }

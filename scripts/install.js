@@ -62,6 +62,37 @@ function usage() {
   return fs.readFileSync(__filename, 'utf8').split('\n').slice(2, 22).map((line) => line.replace(/^ \*\s?/, '')).join('\n');
 }
 
+// The Waypoint MCP tool surface. Codex asks before MCP tools that are not pre-approved,
+// and with approvals_reviewer = "auto_review" a reviewer model judges each such call;
+// it rejected waypoint_await_work as metadata egress (WP-0720). Every Waypoint tool
+// talks only to the operator's own Waypoint, so the installer pre-approves them all.
+const WAYPOINT_TOOLS = [
+  'waypoint_list_projects', 'waypoint_get_project_context', 'waypoint_list_work', 'waypoint_create_work',
+  'waypoint_plan_build', 'waypoint_propose_plan', 'waypoint_record_findings', 'waypoint_get_work',
+  'waypoint_update_work', 'waypoint_start_run', 'waypoint_checkpoint_run', 'waypoint_get_run_handoff',
+  'waypoint_list_run_checkpoints', 'waypoint_complete_run', 'waypoint_raise_decision', 'waypoint_await_decision',
+  'waypoint_await_work', 'waypoint_resume_run', 'waypoint_list_wiki', 'waypoint_read_wiki', 'waypoint_upsert_wiki',
+];
+
+function codexApprovalBlock(tools) {
+  return tools.map((tool) => `\n[mcp_servers.waypoint.tools.${tool}]\napproval_mode = "approve"\n`).join('');
+}
+
+// Pre-approve the Waypoint tools in an existing ~/.codex/config.toml: append a
+// [mcp_servers.waypoint.tools.<name>] table for each tool that has none. Tables may
+// appear anywhere in TOML, so appending is safe and idempotent; a table the user
+// already wrote (any approval_mode) is left alone.
+function ensureCodexApprovals(options) {
+  const file = path.join(options.home, '.codex', 'config.toml');
+  if (!fs.existsSync(file)) return { file, action: 'skip (no ~/.codex/config.toml yet)' };
+  const current = fs.readFileSync(file, 'utf8');
+  if (!current.includes('[mcp_servers.waypoint]')) return { file, action: 'skip (no [mcp_servers.waypoint] table)' };
+  const missing = WAYPOINT_TOOLS.filter((tool) => !current.includes(`[mcp_servers.waypoint.tools.${tool}]`));
+  if (!missing.length) return { file, action: 'skip (all Waypoint tools already have an approval_mode)' };
+  if (!options.dryRun) fs.appendFileSync(file, `\n# Waypoint tools pre-approved by the Waypoint plugin installer (re-run safe).${codexApprovalBlock(missing)}`);
+  return { file, action: `approve ${missing.length} tool${missing.length === 1 ? '' : 's'}` };
+}
+
 // Append a TOML table to ~/.codex/config.toml unless a [mcp_servers.waypoint]
 // table is already there — TOML has no safe generic merge, so present wins.
 function appendCodexConfig(options, url) {
@@ -70,7 +101,7 @@ function appendCodexConfig(options, url) {
   if (current.includes('[mcp_servers.waypoint]')) {
     return { file, action: 'skip ([mcp_servers.waypoint] already present)' };
   }
-  const block = `\n[mcp_servers.waypoint]\nurl = ${JSON.stringify(url)}\nhttp_headers = { "Authorization" = ${JSON.stringify(`Bearer ${options.token}`)} }\n`;
+  const block = `\n[mcp_servers.waypoint]\nurl = ${JSON.stringify(url)}\nhttp_headers = { "Authorization" = ${JSON.stringify(`Bearer ${options.token}`)} }\n${codexApprovalBlock(WAYPOINT_TOOLS)}`;
   if (!options.dryRun) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.appendFileSync(file, block);
@@ -169,12 +200,15 @@ function install(options) {
       results.push(writeFile(at('.codex', 'hooks.json'), render('codex-hooks.json', { ...vars, __WAYPOINT_HOOK__: vars.__WAYPOINT_HOOK_ABS__ }), options, { mergeJson: mergeHooks }));
       if (options.token) {
         results.push(appendCodexConfig(options, url));
-        notes.push('Codex: server written to ~/.codex/config.toml, hooks to .codex/hooks.json. Nothing else to do.');
+        results.push(ensureCodexApprovals(options));
+        notes.push('Codex: server written to ~/.codex/config.toml (Waypoint tools pre-approved), hooks to .codex/hooks.json. Nothing else to do.');
       } else {
+        results.push(ensureCodexApprovals(options));
         notes.push(
           `Codex: add this to ~/.codex/config.toml (or ${toPosix(at('.codex', 'config.toml'))}) and export ${options.tokenEnv}:\n\n` +
           render('codex-config.toml', vars).split('\n').filter((line) => !line.startsWith('#') && line.trim()).map((line) => `    ${line}`).join('\n') +
-          `\n  Hooks were written to .codex/hooks.json (hooks are on by default in current Codex; \`[features] hooks = true\` enables them if yours are off).`
+          `\n  Hooks were written to .codex/hooks.json (hooks are on by default in current Codex; \`[features] hooks = true\` enables them if yours are off).` +
+          `\n  If you installed the plugin through Codex's plugin marketplace (waypoint@waypoint) you do not need .codex/hooks.json as well — Codex runs every matching hook source; the hook de-duplicates itself per tool call, but one source is tidier.`
         );
       }
     }

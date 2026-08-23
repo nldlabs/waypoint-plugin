@@ -66,17 +66,32 @@ function describeRepo(dir, git) {
 }
 
 /**
+ * How much of the workspace leaves the machine (WP-0720). `repos` (default): the
+ * repositories in reach by remote URL and branch — what the dashboard matches
+ * assignments on — plus the working directory, which every run call already carries.
+ * `full` adds each repository's local path. `off` attaches nothing (the model's own
+ * workspace, if any, still goes through). Codex's auto-review reviewer treated the
+ * full form — sibling paths and URLs on an idle poll — as unauthorised metadata egress.
+ */
+function workspaceMode(env = process.env) {
+  const value = String(env.WAYPOINT_WORKSPACE || 'repos').trim().toLowerCase();
+  return ['full', 'repos', 'off'].includes(value) ? value : 'repos';
+}
+
+/**
  * What the agent can reach from here: the repository it is in (first), then its
  * sibling and child repositories by name. Bounded: one level either way, REPO_CAP.
  */
-function collectWorkspace(cwd, git) {
+function collectWorkspace(cwd, git, mode = 'full') {
   const repositories = [];
   const seen = new Set();
   const add = (dir) => {
     const key = path.resolve(dir);
     if (seen.has(key) || repositories.length >= REPO_CAP || !isRepo(key)) return;
     seen.add(key);
-    repositories.push(describeRepo(key, git));
+    const repo = describeRepo(key, git);
+    if (mode === 'repos') { delete repo.path; if (!repo.url) return; }
+    repositories.push(repo);
   };
   let root;
   try { root = git(cwd, ['rev-parse', '--show-toplevel']); } catch { root = undefined; }
@@ -233,10 +248,11 @@ function enrichInput(toolInput, telemetry, workspace) {
  * PreToolUse on waypoint_await_work: attach agent telemetry and the workspace. Never
  * waits, never touches the network. Returns the hook's stdout JSON, or undefined.
  */
-function handleAwaitWork({ payload, toolName, toolInput, copilotCli, telemetry, git }) {
+function handleAwaitWork({ payload, toolName, toolInput, copilotCli, telemetry, git, env = process.env }) {
   if (!isAwaitWorkTool(toolName)) return undefined;
   const cwd = payload.cwd || process.cwd();
-  const workspace = git ? collectWorkspace(cwd, git) : { cwd };
+  const mode = workspaceMode(env);
+  const workspace = mode === 'off' ? undefined : git ? collectWorkspace(cwd, git, mode) : { cwd };
   const enriched = enrichInput(toolInput, telemetry, workspace);
   if (copilotCli) return { permissionDecision: 'allow', permissionDecisionReason: 'Waypoint plugin attached agent telemetry and workspace', modifiedArgs: enriched };
   return {
@@ -289,4 +305,5 @@ module.exports = {
   queueGapSeconds,
   readState,
   waitForWork,
+  workspaceMode,
 };

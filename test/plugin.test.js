@@ -80,6 +80,20 @@ test('model-supplied agent fields win over detected ones; caps hold; harness det
   assert.equal(hook.detectHarness({}, { CLAUDECODE: '1' }), 'claude-code');
   assert.equal(hook.detectHarness({}, { CODEX_HOME: '/x' }), 'codex');
   assert.equal(hook.detectHarness({}, {}), 'unknown');
+  // WP-0720: Codex stamps turn_id on every payload and aliases CLAUDE_PLUGIN_ROOT for
+  // Claude-format plugins; neither the alias nor a Claude variable inherited from the
+  // terminal that launched Codex may turn a Codex session into "claude-code".
+  assert.equal(hook.detectHarness({ tool_name: 'x', turn_id: 't1' }, { CLAUDECODE: '1', CLAUDE_PLUGIN_ROOT: '/p', PLUGIN_ROOT: '/p' }), 'codex');
+  assert.equal(hook.detectHarness({ tool_name: 'x' }, { CLAUDE_PLUGIN_ROOT: '/p', PLUGIN_ROOT: '/p' }), 'unknown');
+  assert.equal(hook.detectHarness({ tool_name: 'x' }, { CLAUDE_PLUGIN_ROOT: '/p' }), 'claude-code');
+});
+
+test('claimOnce lets exactly one hook process handle a tool call when two hook sources fire (WP-0720)', () => {
+  const payload = { session_id: `once-${process.pid}-${Date.now()}`, tool_use_id: 'call_1' };
+  assert.equal(hook.claimOnce(payload, 'pretooluse'), true);
+  assert.equal(hook.claimOnce(payload, 'pretooluse'), false);
+  assert.equal(hook.claimOnce(payload, 'posttooluse'), true, 'a different event of the same call is its own claim');
+  assert.equal(hook.claimOnce({ session_id: payload.session_id }, 'pretooluse'), true, 'no tool_use_id: never deduplicated');
 });
 
 test('as a child process against a real git repo', async (t) => {
@@ -185,8 +199,10 @@ test('manifests: plugin and marketplace agree; the plugin is hooks-only (MCP com
 
 test('installer writes per-harness files, never a token, and merges on re-run', async (t) => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'waypoint-install-'));
-  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
-  const run = (args) => execFileSync(process.execPath, [INSTALL, ...args, '--dir', repo, '--url', 'https://api.example.test/mcp'], { encoding: 'utf8' });
+  // An isolated home: the codex target now reads (and may patch) ~/.codex/config.toml.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'waypoint-install-home-'));
+  t.after(() => { fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); });
+  const run = (args) => execFileSync(process.execPath, [INSTALL, ...args, '--dir', repo, '--home', home, '--url', 'https://api.example.test/mcp'], { encoding: 'utf8' });
 
   const first = run(['all']);
   for (const line of ['create: .codex/hooks.json', 'create: .github/hooks/waypoint.json', 'create: .vscode/mcp.json', 'create: .claude/settings.json', 'bearer_token_env_var = "WAYPOINT_TOKEN"', 'waypoint-plugin']) {
@@ -230,6 +246,9 @@ test('--token makes codex and copilot one-command: user-level MCP config is writ
   assert.ok(toml.includes('[mcp_servers.waypoint]'));
   assert.ok(toml.includes('url = "https://api.example.test/mcp"'));
   assert.ok(toml.includes('"Authorization" = "Bearer tok_secret_123"'));
+  // WP-0720: every Waypoint tool is pre-approved so Codex's reviewer never sees the idle poll.
+  assert.ok(toml.includes('[mcp_servers.waypoint.tools.waypoint_await_work]\napproval_mode = "approve"'));
+  assert.equal((toml.match(/approval_mode = "approve"/g) || []).length, 21);
 
   const copilot = JSON.parse(fs.readFileSync(path.join(home, '.copilot', 'mcp-config.json'), 'utf8'));
   assert.equal(copilot.mcpServers.waypoint.url, 'https://api.example.test/mcp');
@@ -239,7 +258,16 @@ test('--token makes codex and copilot one-command: user-level MCP config is writ
   fs.writeFileSync(path.join(home, '.copilot', 'mcp-config.json'), JSON.stringify({ mcpServers: { other: { type: 'http', url: 'https://other' }, waypoint: { stale: true } } }));
   const second = run(['codex', 'copilot']);
   assert.ok(second.includes('skip ([mcp_servers.waypoint] already present)'));
+  assert.ok(second.includes('skip (all Waypoint tools already have an approval_mode)'));
   assert.equal((fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8').match(/\[mcp_servers\.waypoint\]/g) || []).length, 1);
+  // A hand-written config with the server but only some tools approved gets the rest, once.
+  fs.writeFileSync(path.join(home, '.codex', 'config.toml'), '[mcp_servers.waypoint]\nurl = "https://api.example.test/mcp"\n\n[mcp_servers.waypoint.tools.waypoint_await_decision]\napproval_mode = "prompt"\n');
+  const third = run(['codex']);
+  assert.ok(third.includes('approve 20 tools'), third);
+  const patched = fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8');
+  assert.equal((patched.match(/\[mcp_servers\.waypoint\.tools\.waypoint_await_decision\]/g) || []).length, 1, 'the user\'s own table is left alone');
+  assert.ok(patched.includes('[mcp_servers.waypoint.tools.waypoint_await_work]\napproval_mode = "approve"'));
+  assert.ok(run(['codex']).includes('skip (all Waypoint tools already have an approval_mode)'));
   const merged = JSON.parse(fs.readFileSync(path.join(home, '.copilot', 'mcp-config.json'), 'utf8'));
   assert.equal(merged.mcpServers.other.url, 'https://other');
   assert.equal(merged.mcpServers.waypoint.headers.Authorization, 'Bearer tok_secret_123');

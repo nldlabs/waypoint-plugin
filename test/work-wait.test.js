@@ -83,13 +83,30 @@ test('collectWorkspace reports the repository you are in first, then the reposit
   fs.mkdirSync(path.join(home, 'notes'));
   fs.mkdirSync(path.join(here, 'lambda'));
   const git = (cwd, argv) => { try { return execFileSync('git', argv, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return undefined; } };
-  const workspace = work.collectWorkspace(path.join(here, 'lambda'), git);
+  const workspace = work.collectWorkspace(path.join(here, 'lambda'), git, 'full');
   assert.equal(workspace.cwd, path.join(here, 'lambda').replace(/\\/g, '/'));
   assert.equal(workspace.repositories.length, 2);
   assert.equal(workspace.repositories[0].url, 'https://github.com/nldlabs/waypoint.git');
   assert.equal(workspace.repositories[0].branch, 'main');
+  assert.equal(workspace.repositories[0].path, here.replace(/\\/g, '/'));
   assert.equal(workspace.repositories[1].url, 'git@github.com:nldlabs/waypoint-plugin.git');
+  // WP-0720: the default `repos` mode sends repository identity and branch, never local paths;
+  // a repository without a remote is dropped (a path would be all it could say).
+  gitRepo(path.join(home, 'scratch'));
+  const repos = work.collectWorkspace(path.join(here, 'lambda'), git, 'repos');
+  assert.equal(repos.cwd, workspace.cwd);
+  assert.deepEqual(repos.repositories.map((repo) => Object.keys(repo).sort()), [['branch', 'url'], ['branch', 'url']]);
+  assert.equal(repos.repositories[0].url, 'https://github.com/nldlabs/waypoint.git');
+  assert.equal(work.workspaceMode({}), 'repos');
+  assert.equal(work.workspaceMode({ WAYPOINT_WORKSPACE: 'FULL' }), 'full');
+  assert.equal(work.workspaceMode({ WAYPOINT_WORKSPACE: 'off' }), 'off');
+  assert.equal(work.workspaceMode({ WAYPOINT_WORKSPACE: 'bogus' }), 'repos');
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('WAYPOINT_WORKSPACE=off attaches telemetry but no workspace (WP-0720)', () => {
+  const out = work.handleAwaitWork({ payload: { cwd: '/x' }, toolName: 'mcp__waypoint__waypoint_await_work', toolInput: { note: 'idle' }, telemetry: { agent: { harness: 'codex' } }, git: () => undefined, env: { WAYPOINT_WORKSPACE: 'off' } });
+  assert.deepEqual(out.hookSpecificOutput.updatedInput, { note: 'idle', agent: { harness: 'codex' } });
 });
 
 test('the queue polls on a flat ~30 s cycle (20 s hold + 10 s gap), clamped under the server grace', () => {

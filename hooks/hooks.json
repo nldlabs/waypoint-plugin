@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event sessionstart",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --event sessionstart",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event pretooluse",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --event pretooluse",
             "timeout": 15
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event pretooluse",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --event pretooluse",
             "timeout": 1800
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event posttooluse",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --event posttooluse",
             "timeout": 1800
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event posttooluse",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --event posttooluse",
             "timeout": 5
           }
         ]
@@ -61,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --harness claude-code --event posttoolusefailure",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waypoint-hook.js\" --event posttoolusefailure",
             "timeout": 5
           }
         ]
